@@ -106,9 +106,9 @@ export class MexcFuturesWsClient {
 
     this.pingTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.ping();
+        this.send({ method: "ping" });
       }
-    }, 20_000);
+    }, 15_000);
   }
 
   private stopPing(): void {
