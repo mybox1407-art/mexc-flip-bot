@@ -17,6 +17,7 @@ export class MexcFuturesWsClient {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempt = 0;
   private stopped = false;
+  private pingTimer: NodeJS.Timeout | null = null;
 
   private readonly subscribedDeals = new Set<string>();
   private readonly subscribedDepths = new Set<string>();
@@ -36,6 +37,7 @@ export class MexcFuturesWsClient {
       this.reconnectTimer = null;
     }
 
+    this.stopPing();
     this.ws?.close();
     this.ws = null;
   }
@@ -58,6 +60,8 @@ export class MexcFuturesWsClient {
     this.ws.on("open", () => {
       this.reconnectAttempt = 0;
       logger.info("MEXC Futures WebSocket connected");
+
+      this.startPing();
 
       this.send({
         method: "sub.tickers",
@@ -93,6 +97,25 @@ export class MexcFuturesWsClient {
       this.ws = null;
       this.scheduleReconnect();
     });
+  }
+
+  private startPing(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+    }
+
+    this.pingTimer = setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.ping();
+      }
+    }, 20_000);
+  }
+
+  private stopPing(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
   }
 
   private scheduleReconnect(): void {
