@@ -19,6 +19,8 @@ export class MexcFuturesWsClient {
   private stopped = false;
   private pingTimer: NodeJS.Timeout | null = null;
   private firstTickerLogged = false;
+  private pingCount = 0;
+  private tickerCount = 0;
 
   private readonly subscribedDeals = new Set<string>();
   private readonly subscribedDepths = new Set<string>();
@@ -108,6 +110,8 @@ export class MexcFuturesWsClient {
     this.pingTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.send({ method: "ping" });
+        this.pingCount++;
+        logger.info({ count: this.pingCount }, "Ping sent");
       }
     }, 10_000);
   }
@@ -175,6 +179,12 @@ export class MexcFuturesWsClient {
         const ticker = this.toTicker(row);
 
         if (ticker) {
+          this.tickerCount++;
+
+          if (this.tickerCount % 1000 === 0) {
+            logger.info({ count: this.tickerCount, symbol: ticker.symbol }, "Tickers processed");
+          }
+
           if (!this.firstTickerLogged) {
             logger.info({ symbol: ticker.symbol, price: ticker.lastPrice }, "First ticker received");
             this.firstTickerLogged = true;
