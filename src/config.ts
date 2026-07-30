@@ -34,5 +34,10 @@ export const config = {
   signalWindowMs: numberEnv("SIGNAL_WINDOW_MS", 30_000),
   signalMinMovePct: numberEnv("SIGNAL_MIN_MOVE_PCT", 2),
   signalMinTurnoverUsdt: numberEnv("SIGNAL_MIN_TURNOVER_USDT", 100_000),
-  maxTrackedNewContracts: numberEnv("MAX_TRACKED_NEW_CONTRACTS", 10)
+  maxTrackedNewContracts: numberEnv("MAX_TRACKED_NEW_CONTRACTS", 10),
+
+  dexPollMs: numberEnv("DEX_POLL_MS", 2_000),
+  dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 50_000),
+  minSpreadPct: numberEnv("MIN_SPREAD_PCT", 0.8),
+  signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 60_000)
 };
