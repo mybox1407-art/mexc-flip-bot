@@ -18,6 +18,7 @@ export class MexcFuturesWsClient {
   private reconnectAttempt = 0;
   private stopped = false;
   private pingTimer: NodeJS.Timeout | null = null;
+  private firstTickerLogged = false;
 
   private readonly subscribedDeals = new Set<string>();
   private readonly subscribedDepths = new Set<string>();
@@ -108,7 +109,7 @@ export class MexcFuturesWsClient {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.send({ method: "ping" });
       }
-    }, 15_000);
+    }, 10_000);
   }
 
   private stopPing(): void {
@@ -159,11 +160,25 @@ export class MexcFuturesWsClient {
     const channel = String(message.channel ?? "");
     const data = message.data as JsonRecord | JsonRecord[] | undefined;
 
+    if (channel === "pong") {
+      logger.debug("Received pong from MEXC");
+      return;
+    }
+
+    if (channel === "rs.sub.tickers") {
+      logger.info("MEXC tickers subscription confirmed");
+      return;
+    }
+
     if (channel === "push.tickers" && Array.isArray(data)) {
       for (const row of data) {
         const ticker = this.toTicker(row);
 
         if (ticker) {
+          if (!this.firstTickerLogged) {
+            logger.info({ symbol: ticker.symbol, price: ticker.lastPrice }, "First ticker received");
+            this.firstTickerLogged = true;
+          }
           this.handlers.onTicker(ticker);
         }
       }
