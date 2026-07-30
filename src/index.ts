@@ -2,32 +2,31 @@ import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { MexcFuturesRestClient } from "./mexc/futures-rest.js";
 import { MexcFuturesWsClient } from "./mexc/futures-ws.js";
+import { DexScreenerClient } from "./mexc/dexscreener.js";
 import { ContractWatcher } from "./services/contract-watcher.js";
 import { CsvWriter } from "./services/csv-writer.js";
-import { MarketCache } from "./services/market-cache.js";
-import { SignalEngine } from "./services/signal-engine.js";
+import { DexMapper } from "./services/dex-mapper.js";
+import { DexPricePoller } from "./services/dex-price-poller.js";
+import { SpreadEngine } from "./services/spread-engine.js";
 import { dateStamp, isoNow } from "./utils/time.js";
+import type { MexcContract } from "./types.js";
 
 const csv = new CsvWriter();
-const marketCache = new MarketCache();
-const signalEngine = new SignalEngine(marketCache);
 const restClient = new MexcFuturesRestClient();
-
-const trackedSymbols = new Set<string>();
+const dexClient = new DexScreenerClient();
+const dexMapper = new DexMapper();
+const spreadEngine = new SpreadEngine();
 
 const wsClient = new MexcFuturesWsClient({
   onTicker: (ticker) => {
-    marketCache.updateTicker(ticker);
-
-    const signal = signalEngine.evaluate(ticker);
+    const signal = spreadEngine.evaluate(ticker);
 
     if (!signal) {
       return;
     }
 
-    logger.info(signal, "Paper signal detected");
-
-    void csv.append(`signals-${dateStamp()}.csv`, signal);
+    logger.info(signal, "DEX-MEXC spread signal detected");
+    void csv.append(`spread-signals-${dateStamp()}.csv`, signal);
   },
 
   onDeal: (symbol, payload) => {
@@ -44,48 +43,60 @@ const wsClient = new MexcFuturesWsClient({
       symbol,
       payload: JSON.stringify(payload)
     });
-  },
-
-  onConnected: () => {
-    logger.info("MEXC WS subscriptions restored");
   }
 });
 
-async function handleNewContract(contract: {
-  symbol: string;
-  displayName?: string;
-  baseCoin?: string;
-  quoteCoin?: string;
-  settleCoin?: string;
-  maxLeverage?: number;
-}): Promise<void> {
+const dexPoller = new DexPricePoller(dexClient, dexMapper, (mexcSymbol, pair) => {
+  spreadEngine.updateDexPrice(mexcSymbol, pair);
+
+  void csv.append(`dex-prices-${dateStamp()}.csv`, {
+    timestamp: isoNow(),
+    mexcSymbol,
+    dexPrice: pair.priceUsd,
+    liquidityUsd: pair.liquidityUsd,
+    volumeM5: pair.volumeM5,
+    dexId: pair.dexId
+  });
+});
+
+async function handleNewContract(contract: MexcContract): Promise<void> {
+  const baseCoin = String(contract.baseCoin ?? contract.symbol.split("_")[0]);
+
   await csv.append(`new-contracts-${dateStamp()}.csv`, {
     detectedAt: isoNow(),
     symbol: contract.symbol,
-    displayName: contract.displayName,
-    baseCoin: contract.baseCoin,
-    quoteCoin: contract.quoteCoin,
-    settleCoin: contract.settleCoin,
+    baseCoin,
     maxLeverage: contract.maxLeverage
   });
-
-  if (trackedSymbols.size >= config.maxTrackedNewContracts) {
-    logger.warn(
-      { symbol: contract.symbol },
-      "New contract logged but not subscribed: tracked contracts limit reached"
-    );
-
-    return;
-  }
-
-  trackedSymbols.add(contract.symbol);
 
   wsClient.subscribeDeals(contract.symbol);
   wsClient.subscribeDepth(contract.symbol);
 
+  if (dexMapper.get(contract.symbol)) {
+    return;
+  }
+
+  const pair = await dexClient.findBestSolanaPair(baseCoin);
+
+  if (!pair) {
+    logger.warn(
+      { symbol: contract.symbol, baseCoin },
+      "No Solana DEX pair found for new contract"
+    );
+    await dexMapper.markNotFound(contract.symbol, baseCoin);
+    return;
+  }
+
+  const mapping = await dexMapper.addFromPair(contract.symbol, baseCoin, pair);
+
   logger.info(
-    { symbol: contract.symbol },
-    "Subscribed to deal and depth streams for new contract"
+    {
+      symbol: contract.symbol,
+      dexPair: mapping.dexPairAddress,
+      liquidity: mapping.liquidityUsd,
+      dexId: mapping.dexId
+    },
+    "Mapped MEXC contract to Solana DEX pair"
   );
 }
 
@@ -97,20 +108,23 @@ process.on("SIGTERM", shutdown);
 function shutdown(signal: string): void {
   logger.info({ signal }, "Shutdown started");
   wsClient.stop();
+  dexPoller.stop();
   process.exit(0);
 }
 
 async function bootstrap(): Promise<void> {
   logger.info(
     {
-      signalWindowMs: config.signalWindowMs,
-      minMovePct: config.signalMinMovePct,
-      minTurnoverUsdt: config.signalMinTurnoverUsdt
+      minSpreadPct: config.minSpreadPct,
+      dexMinLiquidityUsd: config.dexMinLiquidityUsd,
+      dexPollMs: config.dexPollMs
     },
-    "Starting MEXC flip bot in paper-signal mode"
+    "Starting MEXC flip bot: DEX-MEXC spread mode"
   );
 
+  await dexMapper.load();
   wsClient.connect();
+  dexPoller.start();
   await contractWatcher.start();
 }
 
