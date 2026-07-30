@@ -1,1 +1,10 @@
+cd ~
+rm -rf mexc-flip-bot
+git clone https://github.com/mybox1407-art/mexc-flip-bot.git
+cd mexc-flip-bot
+npm install protobufjs
+npm install -D @types/protobufjs
+docker compose up -d --build
+npm install
 
+docker compose logs -f mexc-flip-bot
