@@ -9,6 +9,15 @@ function formatNumber(value: number | undefined, digits = 4): string {
   return value.toFixed(digits);
 }
 
+function formatSignedNumber(value: number | undefined, digits = 4): string {
+  if (value === undefined || Number.isNaN(value)) {
+    return "-";
+  }
+
+  const formatted = value.toFixed(digits);
+  return value > 0 ? `+${formatted}` : formatted;
+}
+
 function formatHoldMs(ms?: number): string {
   if (!ms || ms <= 0) {
     return "0s";
@@ -70,7 +79,7 @@ export class TelegramNotifier {
 
   async sendStartup(): Promise<void> {
     const text = [
-      "MEXC flip bot started",
+      "BOT STARTED",
       `Time: ${new Date().toISOString()}`
     ].join("\n");
 
@@ -96,8 +105,6 @@ export class TelegramNotifier {
   }
 
   async sendTradeClosed(trade: PaperTrade): Promise<void> {
-    const pnlSign = (trade.netPnlUsd ?? 0) >= 0 ? "+" : "";
-
     const text = [
       "CLOSE",
       `Symbol: ${trade.symbol}`,
@@ -112,10 +119,10 @@ export class TelegramNotifier {
       `DEX anchor exit: ${formatNumber(trade.dexAnchorAtExit, 8)}`,
       `Entry spread: ${formatNumber(trade.entrySpreadPct, 4)}%`,
       `Exit spread: ${formatNumber(trade.exitSpreadPct, 4)}%`,
-      `Gross PnL USD: ${pnlSign}${formatNumber(trade.grossPnlUsd, 4)}`,
-      `Gross PnL %: ${pnlSign}${formatNumber(trade.grossPnlPct, 4)}%`,
-      `Net PnL USD: ${pnlSign}${formatNumber(trade.netPnlUsd, 4)}`,
-      `Net PnL %: ${pnlSign}${formatNumber(trade.netPnlPct, 4)}%`,
+      `Gross PnL USD: ${formatSignedNumber(trade.grossPnlUsd, 4)}`,
+      `Gross PnL %: ${formatSignedNumber(trade.grossPnlPct, 4)}%`,
+      `Net PnL USD: ${formatSignedNumber(trade.netPnlUsd, 4)}`,
+      `Net PnL %: ${formatSignedNumber(trade.netPnlPct, 4)}%`,
       `Opened at: ${trade.openedAt}`,
       `Closed at: ${trade.closedAt ?? "-"}`,
       `Hold: ${formatHoldMs(trade.holdMs)}`,
