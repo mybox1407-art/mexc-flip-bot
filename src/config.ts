@@ -1,10 +1,10 @@
 import "dotenv/config";
 
-function required(name: string, fallback?: string): string {
+function requireEnv(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
 
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+  if (value === undefined || value === "") {
+    throw new Error(`Missing required env: ${name}`);
   }
 
   return value;
@@ -12,10 +12,13 @@ function required(name: string, fallback?: string): string {
 
 function numberEnv(name: string, fallback: number): number {
   const raw = process.env[name];
-  const value = raw === undefined ? fallback : Number(raw);
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
 
-  if (!Number.isFinite(value)) {
-    throw new Error(`Environment variable ${name} must be a number`);
+  const value = Number(raw);
+  if (Number.isNaN(value)) {
+    throw new Error(`Invalid number env: ${name}=${raw}`);
   }
 
   return value;
@@ -23,51 +26,26 @@ function numberEnv(name: string, fallback: number): number {
 
 function stringListEnv(name: string, fallback: string[]): string[] {
   const raw = process.env[name];
-
   if (!raw) {
     return fallback;
   }
 
   return raw
     .split(",")
-    .map((value) => value.trim().toLowerCase())
+    .map((item) => item.trim())
     .filter(Boolean);
 }
 
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
-  logLevel: process.env.LOG_LEVEL ?? "info",
 
-  mexcRestUrl: required("MEXC_REST_URL", "https://api.mexc.com"),
-  mexcWsUrl: required("MEXC_WS_URL", "wss://contract.mexc.com/edge"),
+  dataDir: process.env.DATA_DIR ?? "data",
 
-  dataDir: required("DATA_DIR", "./data"),
+  mexcRestUrl: requireEnv("MEXC_REST_URL", "https://contract.mexc.com"),
+  mexcWsUrl: requireEnv("MEXC_WS_URL", "wss://contract.mexc.com/edge"),
 
-  contractRefreshMs: numberEnv("CONTRACT_REFRESH_MS", 60_000),
-  contractLookbackHours: numberEnv("CONTRACT_LOOKBACK_HOURS", 72),
-  contractHotHours: numberEnv("CONTRACT_HOT_HOURS", 6),
-  contractHotRecheckMs: numberEnv("CONTRACT_HOT_RECHECK_MS", 15 * 60_000),
-  contractWarmRecheckMs: numberEnv("CONTRACT_WARM_RECHECK_MS", 60 * 60_000),
-  startupBackfillLimit: numberEnv("STARTUP_BACKFILL_LIMIT", 100),
-
-  signalWindowMs: numberEnv("SIGNAL_WINDOW_MS", 30_000),
-  signalMinMovePct: numberEnv("SIGNAL_MIN_MOVE_PCT", 2),
-  signalMinTurnoverUsdt: numberEnv("SIGNAL_MIN_TURNOVER_USDT", 100_000),
-  maxTrackedNewContracts: numberEnv("MAX_TRACKED_NEW_CONTRACTS", 10),
-
+  contractPollMs: numberEnv("CONTRACT_POLL_MS", 60_000),
   dexPollMs: numberEnv("DEX_POLL_MS", 2_000),
-  dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 20_000),
-  dexMinVolumeM5Usd: numberEnv("DEX_MIN_VOLUME_M5_USD", 1_000),
-  dexMaxPairAgeHours: numberEnv("DEX_MAX_PAIR_AGE_HOURS", 24 * 30),
-
-  minSpreadPct: numberEnv("MIN_SPREAD_PCT", 1.2),
-  signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 60_000),
-
-  maxPriceDeviationPct: numberEnv("MAX_PRICE_DEVIATION_PCT", 35),
-  minNetEdgePct: numberEnv("MIN_NET_EDGE_PCT", 0.35),
-  roundTripCostPct: numberEnv("ROUND_TRIP_COST_PCT", 0.12),
-  minDexBuysSellsM5: numberEnv("MIN_DEX_BUYS_SELLS_M5", 20),
-  minMexcTurnover24h: numberEnv("MIN_MEXC_TURNOVER_24H", 250_000),
 
   dexPreferredChains: stringListEnv("DEX_PREFERRED_CHAINS", [
     "bsc",
@@ -79,12 +57,24 @@ export const config = {
     "polygon"
   ]),
 
-  dexQuotePriority: stringListEnv("DEX_QUOTE_PRIORITY", [
-    "usdt",
-    "usdc",
-    "weth",
-    "wbnb",
-    "sol",
-    "ton"
-  ])
-};
+  dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 20_000),
+  dexMinVolumeM5Usd: numberEnv("DEX_MIN_VOLUME_M5_USD", 1_000),
+
+  minMexcTurnover24h: numberEnv("MIN_MEXC_TURNOVER_24H", 500_000),
+  maxMexcBookSpreadPct: numberEnv("MAX_MEXC_BOOK_SPREAD_PCT", 0.35),
+  maxDexAnchorAgeMs: numberEnv("MAX_DEX_ANCHOR_AGE_MS", 5_000),
+  maxDexDriftPct: numberEnv("MAX_DEX_DRIFT_PCT", 0.6),
+
+  minSpreadPct: numberEnv("MIN_SPREAD_PCT", 1.2),
+  minNetEdgePct: numberEnv("MIN_NET_EDGE_PCT", 0.8),
+  assumedFeesPct: numberEnv("ASSUMED_FEES_PCT", 0.04),
+  assumedSlippagePct: numberEnv("ASSUMED_SLIPPAGE_PCT", 0.08),
+
+  signalConfirmTicks: numberEnv("SIGNAL_CONFIRM_TICKS", 3),
+  signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 180_000),
+  signalTtlMs: numberEnv("SIGNAL_TTL_MS", 900_000),
+
+  startupBackfillCount: numberEnv("STARTUP_BACKFILL_COUNT", 20),
+  startupLookbackHours: numberEnv("STARTUP_LOOKBACK_HOURS", 72),
+  rollingWindowRecheckMs: numberEnv("ROLLING_WINDOW_RECHECK_MS", 30 * 60 * 1000)
+} as const;
