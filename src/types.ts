@@ -34,16 +34,30 @@ export interface PricePoint {
 
 export interface FlipSignal {
   id: string;
+  detectedAt: string;
   symbol: string;
   direction: "LONG" | "SHORT";
-  detectedAt: string;
-  currentPrice: number;
-  referencePrice: number;
-  movePct: number;
-  turnover24h: number;
-  bid: number;
-  ask: number;
   spreadPct: number;
+  netEdgePct: number;
+  priceDeviationPct: number;
+  dexPrice: number;
+  mexcPrice: number;
+  mexcBid: number;
+  mexcAsk: number;
+  mexcTurnover24h: number;
+  dexLiquidityUsd: number;
+  dexVolumeM5: number;
+  dexBuysM5: number;
+  dexSellsM5: number;
+  dexId: string;
+  chainId: string;
+  quoteSymbol: string;
+  dexPairAddress: string;
+  entryRef: "ASK" | "BID";
+  mexcBookSpreadPct: number;
+  anchorAgeMs: number;
+  dexDriftPct: number;
+  confirmCount: number;
   reason: string;
 }
 
