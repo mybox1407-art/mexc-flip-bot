@@ -11,27 +11,16 @@ import { ContractWatcher } from "./services/contract-watcher.js";
 import { DexPricePoller } from "./services/dex-price-poller.js";
 import { SpreadEngine } from "./services/spread-engine.js";
 import { PaperExecutionService } from "./services/paper-execution.js";
-import type { MexcContract, MexcTicker } from "./types.js";
+import type { CsvRow, MexcContract, MexcTicker } from "./types.js";
 
 function shouldSkipDexLookup(symbol: string): boolean {
   const upper = symbol.toUpperCase();
   const base = upper.split("_")[0] ?? upper;
 
-  if (upper.includes("_USD1")) {
-    return true;
-  }
-
-  if (base.includes("STOCK")) {
-    return true;
-  }
-
-  if (/(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(base)) {
-    return true;
-  }
-
-  if (/^\d{3,}/.test(base)) {
-    return true;
-  }
+  if (upper.includes("_USD1")) return true;
+  if (base.includes("STOCK")) return true;
+  if (/(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(base)) return true;
+  if (/^\d{3,}/.test(base)) return true;
 
   return false;
 }
@@ -84,29 +73,17 @@ async function bootstrap(): Promise<void> {
 
     if (shouldSkipDexLookup(contract.symbol)) {
       logger.info(
-        {
-          symbol: contract.symbol,
-          displayName: contract.displayName,
-          baseCoin: contract.baseCoin
-        },
+        { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
         "Skipping DEX lookup for unsupported synthetic contract"
       );
       return;
     }
 
-    const searchQuery =
-      contract.baseCoin ?? contract.symbol.split("_")[0] ?? contract.symbol;
-
+    const searchQuery = contract.baseCoin ?? contract.symbol.split("_")[0] ?? contract.symbol;
     const pair = await dexScreenerClient.findBestPairAcrossChains(searchQuery);
 
     if (!pair) {
-      logger.info(
-        {
-          symbol: contract.symbol,
-          baseCoin: contract.baseCoin
-        },
-        "No supported DEX pair found for new contract"
-      );
+      logger.info({ symbol: contract.symbol, baseCoin: contract.baseCoin }, "No supported DEX pair found for new contract");
       return;
     }
 
@@ -170,7 +147,7 @@ async function bootstrap(): Promise<void> {
       const signal = spreadEngine.evaluate(ticker);
 
       if (signal) {
-        await spreadSignalsWriter.appendRow(signal);
+        await spreadSignalsWriter.appendRow(signal as unknown as CsvRow);
 
         logger.warn(
           {
