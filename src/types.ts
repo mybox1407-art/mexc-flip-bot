@@ -61,6 +61,32 @@ export interface FlipSignal {
   reason: string;
 }
 
+export interface PaperTrade {
+  id: string;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  status: "OPEN" | "CLOSED";
+  openedAt: string;
+  closedAt?: string;
+  entryPrice: number;
+  exitPrice?: number;
+  entryRef: "ASK" | "BID";
+  exitRef?: "ASK" | "BID";
+  qtyUsd: number;
+  qtyToken: number;
+  dexAnchorAtEntry: number;
+  dexAnchorAtExit?: number;
+  entrySpreadPct: number;
+  exitSpreadPct?: number;
+  grossPnlPct?: number;
+  netPnlPct?: number;
+  grossPnlUsd?: number;
+  netPnlUsd?: number;
+  holdMs?: number;
+  openReason: string;
+  closeReason?: string;
+}
+
 export interface ContractWatchState {
   symbol: string;
   firstSeenAt: number;
