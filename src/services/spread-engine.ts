@@ -23,9 +23,6 @@ export class SpreadEngine {
       return null;
     }
 
-    const dexPriceAge = Date.now() - Date.parse(isoNow());
-    void dexPriceAge; // возраст проверяем через pairCreatedAt/поллинг, при желании хранить lastUpdateAt
-
     const spreadPct =
       ((dexPair.priceUsd - mexcTicker.lastPrice) / mexcTicker.lastPrice) * 100;
 
@@ -56,6 +53,8 @@ export class SpreadEngine {
       dexLiquidityUsd: dexPair.liquidityUsd,
       dexVolumeM5: dexPair.volumeM5,
       dexId: dexPair.dexId,
+      chainId: dexPair.chainId,
+      quoteSymbol: dexPair.quoteSymbol,
       dexPairAddress: dexPair.pairAddress
     };
   }
