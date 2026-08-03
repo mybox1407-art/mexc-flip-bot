@@ -55,7 +55,9 @@ const dexPoller = new DexPricePoller(dexClient, dexMapper, (mexcSymbol, pair) =>
     dexPrice: pair.priceUsd,
     liquidityUsd: pair.liquidityUsd,
     volumeM5: pair.volumeM5,
-    dexId: pair.dexId
+    dexId: pair.dexId,
+    chainId: pair.chainId,
+    quoteSymbol: pair.quoteSymbol
   });
 });
 
@@ -76,12 +78,12 @@ async function handleNewContract(contract: MexcContract): Promise<void> {
     return;
   }
 
-  const pair = await dexClient.findBestSolanaPair(baseCoin);
+  const pair = await dexClient.findBestPairAcrossChains(baseCoin);
 
   if (!pair) {
     logger.warn(
-      { symbol: contract.symbol, baseCoin },
-      "No Solana DEX pair found for new contract"
+      { symbol: contract.symbol, baseCoin, chains: config.dexPreferredChains },
+      "No supported DEX pair found for new contract"
     );
     await dexMapper.markNotFound(contract.symbol, baseCoin);
     return;
@@ -92,11 +94,13 @@ async function handleNewContract(contract: MexcContract): Promise<void> {
   logger.info(
     {
       symbol: contract.symbol,
+      chainId: mapping.chainId,
       dexPair: mapping.dexPairAddress,
       liquidity: mapping.liquidityUsd,
-      dexId: mapping.dexId
+      dexId: mapping.dexId,
+      quoteSymbol: mapping.quoteSymbol
     },
-    "Mapped MEXC contract to Solana DEX pair"
+    "Mapped MEXC contract to multi-chain DEX pair"
   );
 }
 
@@ -117,9 +121,11 @@ async function bootstrap(): Promise<void> {
     {
       minSpreadPct: config.minSpreadPct,
       dexMinLiquidityUsd: config.dexMinLiquidityUsd,
+      dexMinVolumeM5Usd: config.dexMinVolumeM5Usd,
+      dexPreferredChains: config.dexPreferredChains,
       dexPollMs: config.dexPollMs
     },
-    "Starting MEXC flip bot: DEX-MEXC spread mode"
+    "Starting MEXC flip bot: multi-chain DEX-MEXC spread mode"
   );
 
   await dexMapper.load();
