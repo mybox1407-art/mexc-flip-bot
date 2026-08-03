@@ -63,9 +63,7 @@ export class SpreadEngine {
 
   getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
     const anchor = this.dexSnapshots.get(ticker.symbol);
-    if (!anchor) {
-      return null;
-    }
+    if (!anchor) return null;
 
     const now = Date.now();
     const anchorAgeMs = now - anchor.updatedAt;
@@ -115,33 +113,14 @@ export class SpreadEngine {
 
   evaluate(ticker: MexcTicker): FlipSignal | null {
     const status = this.getAnchorStatus(ticker);
-    if (!status) {
-      return null;
-    }
+    if (!status) return null;
 
-    if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
-      return null;
-    }
-
-    if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) {
-      return null;
-    }
-
-    if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) {
-      return null;
-    }
-
-    if (status.mexcTurnover24h < config.minMexcTurnover24h) {
-      return null;
-    }
-
-    if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) {
-      return null;
-    }
-
-    if (status.dexDriftPct > config.maxDexDriftPct) {
-      return null;
-    }
+    if (status.anchorAgeMs > config.maxDexAnchorAgeMs) return null;
+    if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) return null;
+    if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) return null;
+    if (status.mexcTurnover24h < config.minMexcTurnover24h) return null;
+    if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) return null;
+    if (status.dexDriftPct > config.maxDexDriftPct) return null;
 
     const now = Date.now();
     const state = this.getState(ticker.symbol);
@@ -167,9 +146,7 @@ export class SpreadEngine {
       return null;
     }
 
-    if (now < state.cooldownUntil) {
-      return null;
-    }
+    if (now < state.cooldownUntil) return null;
 
     if (state.lastDirection === direction) {
       state.confirmCount += 1;
@@ -178,20 +155,13 @@ export class SpreadEngine {
       state.confirmCount = 1;
     }
 
-    if (state.confirmCount < config.signalConfirmTicks) {
-      return null;
-    }
+    if (state.confirmCount < config.signalConfirmTicks) return null;
 
     const totalCostsPct = config.assumedFeesPct + config.assumedSlippagePct;
     const netEdgePct = spreadPct - totalCostsPct;
 
-    if (netEdgePct < config.minNetEdgePct) {
-      return null;
-    }
-
-    if (now - state.lastSignalAt < config.signalCooldownMs) {
-      return null;
-    }
+    if (netEdgePct < config.minNetEdgePct) return null;
+    if (now - state.lastSignalAt < config.signalCooldownMs) return null;
 
     state.lastSignalAt = now;
     state.cooldownUntil = now + config.signalCooldownMs;
@@ -204,6 +174,7 @@ export class SpreadEngine {
       spreadPct: round(spreadPct),
       netEdgePct: round(netEdgePct),
       priceDeviationPct: round(spreadPct),
+      currentPrice: round(status.mexcLast, 6),
       dexPrice: round(status.dexPrice, 6),
       mexcPrice: round(status.mexcLast, 6),
       mexcBid: round(status.mexcBid, 6),
@@ -243,24 +214,18 @@ export class SpreadEngine {
   }
 
   private calculateDexDriftPct(history: Array<{ price: number; ts: number }>): number {
-    if (history.length < 2) {
-      return 0;
-    }
+    if (history.length < 2) return 0;
 
     const recent = history.slice(-5);
     const prices = recent.map((item) => item.price).filter((price) => Number.isFinite(price) && price > 0);
 
-    if (prices.length < 2) {
-      return 0;
-    }
+    if (prices.length < 2) return 0;
 
     const min = Math.min(...prices);
     const max = Math.max(...prices);
     const mid = (min + max) / 2;
 
-    if (mid <= 0) {
-      return 0;
-    }
+    if (mid <= 0) return 0;
 
     return ((max - min) / mid) * 100;
   }
