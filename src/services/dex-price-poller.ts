@@ -1,20 +1,26 @@
-import { config } from "../config.js";
 import { logger } from "../logger.js";
-import type { DexPair, DexScreenerClient } from "../mexc/dexscreener.js";
+import type { DexScreenerClient, DexPair } from "../mexc/dexscreener.js";
 import type { DexMapper } from "./dex-mapper.js";
+import { config } from "../config.js";
 
-type PriceCallback = (mexcSymbol: string, pair: DexPair) => void;
+type OnPrice = (mexcSymbol: string, pair: DexPair) => void;
 
 export class DexPricePoller {
-  private timer: NodeJS.Timeout | null = null;
+  private timer?: NodeJS.Timeout;
+  private running = false;
 
   constructor(
-    private readonly client: DexScreenerClient,
-    private readonly mapper: DexMapper,
-    private readonly onPrice: PriceCallback
+    private readonly dexClient: DexScreenerClient,
+    private readonly dexMapper: DexMapper,
+    private readonly onPrice: OnPrice
   ) {}
 
   start(): void {
+    if (this.timer) {
+      return;
+    }
+
+    void this.poll();
     this.timer = setInterval(() => {
       void this.poll();
     }, config.dexPollMs);
@@ -23,35 +29,49 @@ export class DexPricePoller {
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
-      this.timer = null;
+      this.timer = undefined;
     }
   }
 
   private async poll(): Promise<void> {
-    const active = this.mapper.getActive();
-
-    if (active.length === 0) {
+    if (this.running) {
       return;
     }
 
-    const addressToSymbol = new Map(
-      active.map((m) => [m.solanaTokenAddress, m.mexcSymbol])
-    );
+    this.running = true;
 
     try {
-      const pairs = await this.client.getPairsByTokenAddresses(
-        [...addressToSymbol.keys()]
-      );
+      const mappings = this.dexMapper.getActive();
 
-      for (const [address, pair] of pairs) {
-        const mexcSymbol = addressToSymbol.get(address);
+      for (const mapping of mappings) {
+        try {
+          if (!mapping.chainId || !mapping.baseTokenAddress) {
+            continue;
+          }
 
-        if (mexcSymbol && pair.priceUsd > 0) {
-          this.onPrice(mexcSymbol, pair);
+          const pair = await this.dexClient.getBestPairForToken(
+            mapping.chainId,
+            mapping.baseTokenAddress
+          );
+
+          if (!pair) {
+            continue;
+          }
+
+          this.onPrice(mapping.mexcSymbol, pair);
+        } catch (error) {
+          logger.warn(
+            {
+              mexcSymbol: mapping.mexcSymbol,
+              chainId: mapping.chainId,
+              err: error
+            },
+            "Failed to poll DEX price for token"
+          );
         }
       }
-    } catch (error) {
-      logger.warn({ err: error }, "DEX price poll failed");
+    } finally {
+      this.running = false;
     }
   }
 }
