@@ -45,13 +45,13 @@ export class DexPricePoller {
 
       for (const mapping of mappings) {
         try {
-          if (!mapping.chainId || !mapping.pairAddress) {
+          if (!mapping.chainId || !mapping.dexPairAddress) {
             continue;
           }
 
           const pair = await this.dexClient.getPairByChainAndAddress(
             mapping.chainId,
-            mapping.pairAddress
+            mapping.dexPairAddress
           );
 
           if (!pair) {
@@ -64,8 +64,8 @@ export class DexPricePoller {
             {
               mexcSymbol: mapping.mexcSymbol,
               chainId: mapping.chainId,
-              pairAddress: mapping.pairAddress,
-              err: error
+              dexPairAddress: mapping.dexPairAddress,
+              err: error,
             },
             "Failed to poll DEX price for pair"
           );
