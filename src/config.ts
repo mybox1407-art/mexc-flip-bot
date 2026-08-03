@@ -38,6 +38,7 @@ function stringListEnv(name: string, fallback: string[]): string[] {
 
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
+  logLevel: process.env.LOG_LEVEL ?? "info",
 
   dataDir: process.env.DATA_DIR ?? "data",
 
@@ -45,7 +46,16 @@ export const config = {
   mexcWsUrl: requireEnv("MEXC_WS_URL", "wss://contract.mexc.com/edge"),
 
   contractPollMs: numberEnv("CONTRACT_POLL_MS", 60_000),
+  contractRefreshMs: numberEnv("CONTRACT_REFRESH_MS", 60_000),
+  contractLookbackHours: numberEnv("CONTRACT_LOOKBACK_HOURS", 72),
+  contractHotHours: numberEnv("CONTRACT_HOT_HOURS", 24),
+  contractHotRecheckMs: numberEnv("CONTRACT_HOT_RECHECK_MS", 5_000),
+  contractWarmRecheckMs: numberEnv("CONTRACT_WARM_RECHECK_MS", 30_000),
+
   dexPollMs: numberEnv("DEX_POLL_MS", 2_000),
+  dexMaxPairAgeHours: numberEnv("DEX_MAX_PAIR_AGE_HOURS", 24),
+  dexQuotePriority: stringListEnv("DEX_QUOTE_PRIORITY", ["USDC", "USDT", "SOL", "ETH"]),
+  minDexBuysSellsM5: numberEnv("MIN_DEX_BUYS_SELLS_M5", 10),
 
   dexPreferredChains: stringListEnv("DEX_PREFERRED_CHAINS", [
     "bsc",
@@ -72,6 +82,9 @@ export const config = {
 
   signalConfirmTicks: numberEnv("SIGNAL_CONFIRM_TICKS", 3),
   signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 180_000),
+  signalWindowMs: numberEnv("SIGNAL_WINDOW_MS", 30 * 60 * 1000),
+  signalMinTurnoverUsdt: numberEnv("SIGNAL_MIN_TURNOVER_USDT", 500_000),
+  signalMinMovePct: numberEnv("SIGNAL_MIN_MOVE_PCT", 1.0),
 
   paperTradeUsdSize: numberEnv("PAPER_TRADE_USD_SIZE", 100),
   paperExitSpreadPct: numberEnv("PAPER_EXIT_SPREAD_PCT", 0.25),
@@ -79,6 +92,7 @@ export const config = {
   paperMaxHoldMs: numberEnv("PAPER_MAX_HOLD_MS", 15 * 60 * 1000),
 
   startupBackfillCount: numberEnv("STARTUP_BACKFILL_COUNT", 20),
+  startupBackfillLimit: numberEnv("STARTUP_BACKFILL_LIMIT", 200),
   startupLookbackHours: numberEnv("STARTUP_LOOKBACK_HOURS", 72),
   rollingWindowRecheckMs: numberEnv("ROLLING_WINDOW_RECHECK_MS", 30 * 60 * 1000)
 } as const;
