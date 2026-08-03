@@ -21,6 +21,18 @@ function numberEnv(name: string, fallback: number): number {
   return value;
 }
 
+function stringListEnv(name: string, fallback: string[]): string[] {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+
+  return raw
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   logLevel: process.env.LOG_LEVEL ?? "info",
@@ -38,6 +50,28 @@ export const config = {
 
   dexPollMs: numberEnv("DEX_POLL_MS", 2_000),
   dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 50_000),
+  dexMinVolume5mUsd: numberEnv("DEX_MIN_VOLUME_M5_USD", 5_000),
+  dexMaxPairAgeHours: numberEnv("DEX_MAX_PAIR_AGE_HOURS", 24 * 30),
+
   minSpreadPct: numberEnv("MIN_SPREAD_PCT", 0.8),
-  signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 60_000)
+  signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 60_000),
+
+  dexPreferredChains: stringListEnv("DEX_PREFERRED_CHAINS", [
+    "bsc",
+    "base",
+    "ethereum",
+    "solana",
+    "arbitrum",
+    "ton",
+    "polygon"
+  ]),
+
+  dexQuotePriority: stringListEnv("DEX_QUOTE_PRIORITY", [
+    "usdt",
+    "usdc",
+    "weth",
+    "wbnb",
+    "sol",
+    "ton"
+  ])
 };
