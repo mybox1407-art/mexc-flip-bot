@@ -46,7 +46,7 @@ async function bootstrap(): Promise<void> {
 
   const mexcRestClient = new MexcFuturesRestClient(config.mexcRestUrl);
   const dexScreenerClient = new DexScreenerClient();
-  const dexMapper = new DexMapper(path.join(config.dataDir, "dex-mapping.json"));
+  const dexMapper = new DexMapper();
   const spreadEngine = new SpreadEngine();
 
   await dexMapper.load();
