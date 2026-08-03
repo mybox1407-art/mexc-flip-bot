@@ -1,4 +1,34 @@
+import { logger } from "../logger.js";
 import type { PaperTrade } from "../types.js";
+
+function formatNumber(value: number | undefined, digits = 4): string {
+  if (value === undefined || Number.isNaN(value)) {
+    return "-";
+  }
+
+  return value.toFixed(digits);
+}
+
+function formatHoldMs(ms?: number): string {
+  if (!ms || ms <= 0) {
+    return "0s";
+  }
+
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+}
 
 export class TelegramNotifier {
   constructor(
@@ -6,39 +36,59 @@ export class TelegramNotifier {
     private readonly chatId?: string
   ) {}
 
-  private get enabled(): boolean {
+  get enabled(): boolean {
     return Boolean(this.token && this.chatId);
   }
 
   private async send(text: string): Promise<void> {
-    if (!this.enabled) return;
-
-    const res = await fetch(`https://api.telegram.org/bot${this.token}/sendMessage`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: this.chatId,
-        text,
-        disable_web_page_preview: true
-      })
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.warn("Telegram send failed", res.status, body);
+    if (!this.enabled) {
+      logger.info("Telegram notifier disabled");
+      return;
     }
+
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${this.token}/sendMessage`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          chat_id: this.chatId,
+          text,
+          disable_web_page_preview: true
+        })
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        logger.warn({ status: response.status, body }, "Telegram sendMessage failed");
+      }
+    } catch (error) {
+      logger.warn({ err: error }, "Telegram sendMessage error");
+    }
+  }
+
+  async sendStartup(): Promise<void> {
+    const text = [
+      "MEXC flip bot started",
+      `Time: ${new Date().toISOString()}`
+    ].join("\n");
+
+    await this.send(text);
   }
 
   async sendTradeOpened(trade: PaperTrade): Promise<void> {
     const text = [
-      "🟢 OPEN",
-      `${trade.symbol} ${trade.direction}`,
-      `Entry: ${trade.entryPrice}`,
-      `Size: ${trade.qtyUsd} USD`,
-      `Qty: ${trade.qtyToken}`,
-      `Spread: ${trade.entrySpreadPct.toFixed(2)}%`,
-      `Ref: ${trade.entryRef}`,
-      `Time: ${trade.openedAt}`,
+      "OPEN",
+      `Symbol: ${trade.symbol}`,
+      `Direction: ${trade.direction}`,
+      `Entry price: ${formatNumber(trade.entryPrice, 8)}`,
+      `Entry ref: ${trade.entryRef}`,
+      `Size USD: ${formatNumber(trade.qtyUsd, 2)}`,
+      `Qty token: ${formatNumber(trade.qtyToken, 8)}`,
+      `DEX anchor entry: ${formatNumber(trade.dexAnchorAtEntry, 8)}`,
+      `Entry spread: ${formatNumber(trade.entrySpreadPct, 4)}%`,
+      `Opened at: ${trade.openedAt}`,
       `Reason: ${trade.openReason}`
     ].join("\n");
 
@@ -46,17 +96,30 @@ export class TelegramNotifier {
   }
 
   async sendTradeClosed(trade: PaperTrade): Promise<void> {
+    const pnlSign = (trade.netPnlUsd ?? 0) >= 0 ? "+" : "";
+
     const text = [
-      "🔴 CLOSE",
-      `${trade.symbol} ${trade.direction}`,
-      `Entry: ${trade.entryPrice}`,
-      `Exit: ${trade.exitPrice ?? "-"}`,
-      `Gross PnL: ${trade.grossPnlUsd?.toFixed(2) ?? "-"} USD (${trade.grossPnlPct?.toFixed(2) ?? "-"}%)`,
-      `Net PnL: ${trade.netPnlUsd?.toFixed(2) ?? "-"} USD (${trade.netPnlPct?.toFixed(2) ?? "-"}%)`,
-      `Hold: ${trade.holdMs ?? 0} ms`,
+      "CLOSE",
+      `Symbol: ${trade.symbol}`,
+      `Direction: ${trade.direction}`,
+      `Entry price: ${formatNumber(trade.entryPrice, 8)}`,
+      `Exit price: ${formatNumber(trade.exitPrice, 8)}`,
+      `Entry ref: ${trade.entryRef}`,
       `Exit ref: ${trade.exitRef ?? "-"}`,
-      `Time: ${trade.closedAt ?? "-"}`,
-      `Reason: ${trade.closeReason ?? "-"}`
+      `Size USD: ${formatNumber(trade.qtyUsd, 2)}`,
+      `Qty token: ${formatNumber(trade.qtyToken, 8)}`,
+      `DEX anchor entry: ${formatNumber(trade.dexAnchorAtEntry, 8)}`,
+      `DEX anchor exit: ${formatNumber(trade.dexAnchorAtExit, 8)}`,
+      `Entry spread: ${formatNumber(trade.entrySpreadPct, 4)}%`,
+      `Exit spread: ${formatNumber(trade.exitSpreadPct, 4)}%`,
+      `Gross PnL USD: ${pnlSign}${formatNumber(trade.grossPnlUsd, 4)}`,
+      `Gross PnL %: ${pnlSign}${formatNumber(trade.grossPnlPct, 4)}%`,
+      `Net PnL USD: ${pnlSign}${formatNumber(trade.netPnlUsd, 4)}`,
+      `Net PnL %: ${pnlSign}${formatNumber(trade.netPnlPct, 4)}%`,
+      `Opened at: ${trade.openedAt}`,
+      `Closed at: ${trade.closedAt ?? "-"}`,
+      `Hold: ${formatHoldMs(trade.holdMs)}`,
+      `Close reason: ${trade.closeReason ?? "-"}`
     ].join("\n");
 
     await this.send(text);
