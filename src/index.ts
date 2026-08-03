@@ -24,7 +24,7 @@ function shouldSkipDexLookup(symbol: string): boolean {
     return true;
   }
 
-  if (/(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD)/.test(base)) {
+  if (/(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(base)) {
     return true;
   }
 
@@ -46,7 +46,7 @@ async function bootstrap(): Promise<void> {
 
   const mexcRestClient = new MexcFuturesRestClient();
   const dexScreenerClient = new DexScreenerClient();
-  const dexMapper = new DexMapper(); // ← ИСПРАВЛЕНО: без аргумента
+  const dexMapper = new DexMapper();
   const spreadEngine = new SpreadEngine();
 
   await dexMapper.load();
@@ -54,12 +54,14 @@ async function bootstrap(): Promise<void> {
   logger.info(
     {
       minSpreadPct: config.minSpreadPct,
+      minNetEdgePct: config.minNetEdgePct,
       dexMinLiquidityUsd: config.dexMinLiquidityUsd,
       dexMinVolumeM5Usd: config.dexMinVolumeM5Usd,
+      minMexcTurnover24h: config.minMexcTurnover24h,
       dexPreferredChains: config.dexPreferredChains,
-      dexPollMs: config.dexPollMs,
+      dexPollMs: config.dexPollMs
     },
-    "Starting MEXC flip bot: multi-chain DEX-MEXC spread mode"
+    "Starting MEXC flip bot: DEX anchor / MEXC execution mode"
   );
 
   const handleNewContract = async (contract: MexcContract): Promise<void> => {
@@ -71,7 +73,7 @@ async function bootstrap(): Promise<void> {
       quoteCoin: contract.quoteCoin ?? "",
       settleCoin: contract.settleCoin ?? "",
       maxLeverage: contract.maxLeverage ?? "",
-      contractSize: contract.contractSize ?? "",
+      contractSize: contract.contractSize ?? ""
     });
 
     if (shouldSkipDexLookup(contract.symbol)) {
@@ -79,7 +81,7 @@ async function bootstrap(): Promise<void> {
         {
           symbol: contract.symbol,
           displayName: contract.displayName,
-          baseCoin: contract.baseCoin,
+          baseCoin: contract.baseCoin
         },
         "Skipping DEX lookup for unsupported synthetic contract"
       );
@@ -95,7 +97,7 @@ async function bootstrap(): Promise<void> {
       logger.info(
         {
           symbol: contract.symbol,
-          baseCoin: contract.baseCoin,
+          baseCoin: contract.baseCoin
         },
         "No supported DEX pair found for new contract"
       );
@@ -114,7 +116,7 @@ async function bootstrap(): Promise<void> {
       volumeM5: pair.volumeM5,
       priceUsd: pair.priceUsd,
       status: "active",
-      updatedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     });
 
     await dexMapper.save();
@@ -127,9 +129,9 @@ async function bootstrap(): Promise<void> {
         quoteSymbol: pair.quoteSymbol,
         liquidityUsd: pair.liquidityUsd,
         volumeM5: pair.volumeM5,
-        priceUsd: pair.priceUsd,
+        priceUsd: pair.priceUsd
       },
-      "Mapped MEXC contract to multi-chain DEX pair"
+      "Mapped MEXC contract to DEX anchor"
     );
   };
 
@@ -152,7 +154,7 @@ async function bootstrap(): Promise<void> {
         dexId: pair.dexId,
         chainId: pair.chainId,
         quoteSymbol: pair.quoteSymbol,
-        pairAddress: pair.pairAddress,
+        pairAddress: pair.pairAddress
       });
     }
   );
@@ -170,13 +172,19 @@ async function bootstrap(): Promise<void> {
             direction: signal.direction,
             spreadPct: signal.spreadPct,
             netEdgePct: signal.netEdgePct,
-            priceDeviationPct: signal.priceDeviationPct,
             dexPrice: signal.dexPrice,
             mexcPrice: signal.mexcPrice,
+            mexcBid: signal.mexcBid,
+            mexcAsk: signal.mexcAsk,
+            entryRef: signal.entryRef,
+            mexcBookSpreadPct: signal.mexcBookSpreadPct,
+            anchorAgeMs: signal.anchorAgeMs,
+            dexDriftPct: signal.dexDriftPct,
             dexLiquidityUsd: signal.dexLiquidityUsd,
             dexVolumeM5: signal.dexVolumeM5,
+            reason: signal.reason
           },
-          "DEX-MEXC spread signal detected"
+          "DEX anchor deviation signal detected on MEXC"
         );
       }
     },
@@ -184,16 +192,16 @@ async function bootstrap(): Promise<void> {
       await dealsWriter.appendRow({
         timestamp: new Date().toISOString(),
         symbol,
-        payload: JSON.stringify(payload),
+        payload: JSON.stringify(payload)
       });
     },
     onDepth: async (symbol, payload) => {
       await depthWriter.appendRow({
         timestamp: new Date().toISOString(),
         symbol,
-        payload: JSON.stringify(payload),
+        payload: JSON.stringify(payload)
       });
-    },
+    }
   });
 
   mexcWsClient.connect();
@@ -211,7 +219,7 @@ async function bootstrap(): Promise<void> {
       dexPricesWriter.close(),
       spreadSignalsWriter.close(),
       dealsWriter.close(),
-      depthWriter.close(),
+      depthWriter.close()
     ]);
 
     process.exit(0);
