@@ -40,6 +40,7 @@ export interface FlipSignal {
   spreadPct: number;
   netEdgePct: number;
   priceDeviationPct: number;
+  currentPrice: number;
   dexPrice: number;
   mexcPrice: number;
   mexcBid: number;
