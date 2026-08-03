@@ -3,7 +3,7 @@ import type { DexScreenerClient, DexPair } from "../mexc/dexscreener.js";
 import type { DexMapper } from "./dex-mapper.js";
 import { config } from "../config.js";
 
-type OnPrice = (mexcSymbol: string, pair: DexPair) => void;
+type OnPrice = (mexcSymbol: string, pair: DexPair) => void | Promise<void>;
 
 export class DexPricePoller {
   private timer?: NodeJS.Timeout;
@@ -45,28 +45,29 @@ export class DexPricePoller {
 
       for (const mapping of mappings) {
         try {
-          if (!mapping.chainId || !mapping.baseTokenAddress) {
+          if (!mapping.chainId || !mapping.pairAddress) {
             continue;
           }
 
-          const pair = await this.dexClient.getBestPairForToken(
+          const pair = await this.dexClient.getPairByChainAndAddress(
             mapping.chainId,
-            mapping.baseTokenAddress
+            mapping.pairAddress
           );
 
           if (!pair) {
             continue;
           }
 
-          this.onPrice(mapping.mexcSymbol, pair);
+          await this.onPrice(mapping.mexcSymbol, pair);
         } catch (error) {
           logger.warn(
             {
               mexcSymbol: mapping.mexcSymbol,
               chainId: mapping.chainId,
+              pairAddress: mapping.pairAddress,
               err: error
             },
-            "Failed to poll DEX price for token"
+            "Failed to poll DEX price for pair"
           );
         }
       }
