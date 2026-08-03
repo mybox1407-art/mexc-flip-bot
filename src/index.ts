@@ -46,7 +46,7 @@ async function bootstrap(): Promise<void> {
 
   const mexcRestClient = new MexcFuturesRestClient(config.mexcRestUrl);
   const dexScreenerClient = new DexScreenerClient();
-  const dexMapper = new DexMapper();
+  const dexMapper = new DexMapper(); // ← ИСПРАВЛЕНО: без аргумента
   const spreadEngine = new SpreadEngine();
 
   await dexMapper.load();
@@ -57,7 +57,7 @@ async function bootstrap(): Promise<void> {
       dexMinLiquidityUsd: config.dexMinLiquidityUsd,
       dexMinVolumeM5Usd: config.dexMinVolumeM5Usd,
       dexPreferredChains: config.dexPreferredChains,
-      dexPollMs: config.dexPollMs
+      dexPollMs: config.dexPollMs,
     },
     "Starting MEXC flip bot: multi-chain DEX-MEXC spread mode"
   );
@@ -71,7 +71,7 @@ async function bootstrap(): Promise<void> {
       quoteCoin: contract.quoteCoin ?? "",
       settleCoin: contract.settleCoin ?? "",
       maxLeverage: contract.maxLeverage ?? "",
-      contractSize: contract.contractSize ?? ""
+      contractSize: contract.contractSize ?? "",
     });
 
     if (shouldSkipDexLookup(contract.symbol)) {
@@ -79,7 +79,7 @@ async function bootstrap(): Promise<void> {
         {
           symbol: contract.symbol,
           displayName: contract.displayName,
-          baseCoin: contract.baseCoin
+          baseCoin: contract.baseCoin,
         },
         "Skipping DEX lookup for unsupported synthetic contract"
       );
@@ -95,7 +95,7 @@ async function bootstrap(): Promise<void> {
       logger.info(
         {
           symbol: contract.symbol,
-          baseCoin: contract.baseCoin
+          baseCoin: contract.baseCoin,
         },
         "No supported DEX pair found for new contract"
       );
@@ -114,7 +114,7 @@ async function bootstrap(): Promise<void> {
       volumeM5: pair.volumeM5,
       priceUsd: pair.priceUsd,
       status: "active",
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     });
 
     await dexMapper.save();
@@ -127,7 +127,7 @@ async function bootstrap(): Promise<void> {
         quoteSymbol: pair.quoteSymbol,
         liquidityUsd: pair.liquidityUsd,
         volumeM5: pair.volumeM5,
-        priceUsd: pair.priceUsd
+        priceUsd: pair.priceUsd,
       },
       "Mapped MEXC contract to multi-chain DEX pair"
     );
@@ -152,7 +152,7 @@ async function bootstrap(): Promise<void> {
         dexId: pair.dexId,
         chainId: pair.chainId,
         quoteSymbol: pair.quoteSymbol,
-        pairAddress: pair.pairAddress
+        pairAddress: pair.pairAddress,
       });
     }
   );
@@ -174,7 +174,7 @@ async function bootstrap(): Promise<void> {
             dexPrice: signal.dexPrice,
             mexcPrice: signal.mexcPrice,
             dexLiquidityUsd: signal.dexLiquidityUsd,
-            dexVolumeM5: signal.dexVolumeM5
+            dexVolumeM5: signal.dexVolumeM5,
           },
           "DEX-MEXC spread signal detected"
         );
@@ -184,16 +184,16 @@ async function bootstrap(): Promise<void> {
       await dealsWriter.appendRow({
         timestamp: new Date().toISOString(),
         symbol,
-        payload: JSON.stringify(payload)
+        payload: JSON.stringify(payload),
       });
     },
     onDepth: async (symbol, payload) => {
       await depthWriter.appendRow({
         timestamp: new Date().toISOString(),
         symbol,
-        payload: JSON.stringify(payload)
+        payload: JSON.stringify(payload),
       });
-    }
+    },
   });
 
   mexcWsClient.connect();
@@ -211,7 +211,7 @@ async function bootstrap(): Promise<void> {
       dexPricesWriter.close(),
       spreadSignalsWriter.close(),
       dealsWriter.close(),
-      depthWriter.close()
+      depthWriter.close(),
     ]);
 
     process.exit(0);
