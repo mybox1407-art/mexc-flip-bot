@@ -19,6 +19,21 @@ export interface TokenMapping {
   status: "active" | "not_found" | "blacklisted";
 }
 
+export interface UpsertData {
+  mexcSymbol: string;
+  chainId: string;
+  dexId: string;
+  pairAddress: string;
+  baseTokenAddress: string;
+  quoteTokenAddress: string;
+  quoteSymbol: string;
+  liquidityUsd: number;
+  volumeM5: number;
+  priceUsd: number | null;
+  status: "active" | "not_found" | "blacklisted";
+  updatedAt: string;
+}
+
 export class DexMapper {
   private readonly mappings = new Map<string, TokenMapping>();
   private readonly filePath: string;
@@ -56,7 +71,28 @@ export class DexMapper {
   }
 
   getActive(): TokenMapping[] {
-    return [...this.mappings.values()].filter((mapping) => mapping.status === "active");
+    return [...this.mappings.values()].filter(
+      (mapping) => mapping.status === "active"
+    );
+  }
+
+  upsert(data: UpsertData): void {
+    const existing = this.mappings.get(data.mexcSymbol);
+
+    this.mappings.set(data.mexcSymbol, {
+      mexcSymbol: data.mexcSymbol,
+      baseCoin: existing?.baseCoin ?? "",
+      chainId: data.chainId,
+      baseTokenAddress: data.baseTokenAddress,
+      quoteTokenAddress: data.quoteTokenAddress,
+      quoteSymbol: data.quoteSymbol,
+      dexPairAddress: data.pairAddress,
+      dexId: data.dexId,
+      liquidityUsd: data.liquidityUsd,
+      pairCreatedAt: existing?.pairCreatedAt,
+      mappedAt: existing?.mappedAt ?? data.updatedAt,
+      status: data.status,
+    });
   }
 
   async addFromPair(
@@ -76,7 +112,7 @@ export class DexMapper {
       liquidityUsd: pair.liquidityUsd,
       pairCreatedAt: pair.pairCreatedAt,
       mappedAt: new Date().toISOString(),
-      status: "active"
+      status: "active",
     };
 
     this.mappings.set(mexcSymbol, mapping);
@@ -97,7 +133,7 @@ export class DexMapper {
       liquidityUsd: 0,
       pairCreatedAt: undefined,
       mappedAt: new Date().toISOString(),
-      status: "not_found"
+      status: "not_found",
     });
 
     await this.save();
