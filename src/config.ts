@@ -56,12 +56,18 @@ export const config = {
   maxTrackedNewContracts: numberEnv("MAX_TRACKED_NEW_CONTRACTS", 10),
 
   dexPollMs: numberEnv("DEX_POLL_MS", 2_000),
-  dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 50_000),
-  dexMinVolumeM5Usd: numberEnv("DEX_MIN_VOLUME_M5_USD", 5_000),
+  dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 20_000),
+  dexMinVolumeM5Usd: numberEnv("DEX_MIN_VOLUME_M5_USD", 1_000),
   dexMaxPairAgeHours: numberEnv("DEX_MAX_PAIR_AGE_HOURS", 24 * 30),
 
-  minSpreadPct: numberEnv("MIN_SPREAD_PCT", 0.8),
+  minSpreadPct: numberEnv("MIN_SPREAD_PCT", 1.2),
   signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 60_000),
+
+  maxPriceDeviationPct: numberEnv("MAX_PRICE_DEVIATION_PCT", 35),
+  minNetEdgePct: numberEnv("MIN_NET_EDGE_PCT", 0.35),
+  roundTripCostPct: numberEnv("ROUND_TRIP_COST_PCT", 0.12),
+  minDexBuysSellsM5: numberEnv("MIN_DEX_BUYS_SELLS_M5", 20),
+  minMexcTurnover24h: numberEnv("MIN_MEXC_TURNOVER_24H", 250_000),
 
   dexPreferredChains: stringListEnv("DEX_PREFERRED_CHAINS", [
     "bsc",
