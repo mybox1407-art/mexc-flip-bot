@@ -45,6 +45,9 @@ export const config = {
   mexcRestUrl: requireEnv("MEXC_REST_URL", "https://contract.mexc.com"),
   mexcWsUrl: requireEnv("MEXC_WS_URL", "wss://contract.mexc.com/edge"),
 
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
+  telegramChatId: process.env.TELEGRAM_CHAT_ID,
+
   contractPollMs: numberEnv("CONTRACT_POLL_MS", 60_000),
   contractRefreshMs: numberEnv("CONTRACT_REFRESH_MS", 60_000),
   contractLookbackHours: numberEnv("CONTRACT_LOOKBACK_HOURS", 72),
