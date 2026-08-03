@@ -44,6 +44,12 @@ export const config = {
   dataDir: required("DATA_DIR", "./data"),
 
   contractRefreshMs: numberEnv("CONTRACT_REFRESH_MS", 60_000),
+  contractLookbackHours: numberEnv("CONTRACT_LOOKBACK_HOURS", 72),
+  contractHotHours: numberEnv("CONTRACT_HOT_HOURS", 6),
+  contractHotRecheckMs: numberEnv("CONTRACT_HOT_RECHECK_MS", 15 * 60_000),
+  contractWarmRecheckMs: numberEnv("CONTRACT_WARM_RECHECK_MS", 60 * 60_000),
+  startupBackfillLimit: numberEnv("STARTUP_BACKFILL_LIMIT", 100),
+
   signalWindowMs: numberEnv("SIGNAL_WINDOW_MS", 30_000),
   signalMinMovePct: numberEnv("SIGNAL_MIN_MOVE_PCT", 2),
   signalMinTurnoverUsdt: numberEnv("SIGNAL_MIN_TURNOVER_USDT", 100_000),
