@@ -44,7 +44,7 @@ async function bootstrap(): Promise<void> {
   const dealsWriter = new CsvWriter(path.join(config.dataDir, "deals.csv"));
   const depthWriter = new CsvWriter(path.join(config.dataDir, "depth.csv"));
 
-  const mexcRestClient = new MexcFuturesRestClient(config.mexcRestUrl);
+  const mexcRestClient = new MexcFuturesRestClient();
   const dexScreenerClient = new DexScreenerClient();
   const dexMapper = new DexMapper(); // ← ИСПРАВЛЕНО: без аргумента
   const spreadEngine = new SpreadEngine();
