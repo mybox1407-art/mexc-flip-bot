@@ -10,6 +10,7 @@ import { DexScreenerClient } from "./mexc/dexscreener.js";
 import { ContractWatcher } from "./services/contract-watcher.js";
 import { DexPricePoller } from "./services/dex-price-poller.js";
 import { SpreadEngine } from "./services/spread-engine.js";
+import { PaperExecutionService } from "./services/paper-execution.js";
 import type { MexcContract, MexcTicker } from "./types.js";
 
 function shouldSkipDexLookup(symbol: string): boolean {
@@ -41,6 +42,7 @@ async function bootstrap(): Promise<void> {
   const contractsWriter = new CsvWriter(path.join(config.dataDir, "new-contracts.csv"));
   const dexPricesWriter = new CsvWriter(path.join(config.dataDir, "dex-prices.csv"));
   const spreadSignalsWriter = new CsvWriter(path.join(config.dataDir, "spread-signals.csv"));
+  const paperTradesWriter = new CsvWriter(path.join(config.dataDir, "paper-trades.csv"));
   const dealsWriter = new CsvWriter(path.join(config.dataDir, "deals.csv"));
   const depthWriter = new CsvWriter(path.join(config.dataDir, "depth.csv"));
 
@@ -48,6 +50,7 @@ async function bootstrap(): Promise<void> {
   const dexScreenerClient = new DexScreenerClient();
   const dexMapper = new DexMapper();
   const spreadEngine = new SpreadEngine();
+  const paperExecution = new PaperExecutionService();
 
   await dexMapper.load();
 
@@ -58,10 +61,13 @@ async function bootstrap(): Promise<void> {
       dexMinLiquidityUsd: config.dexMinLiquidityUsd,
       dexMinVolumeM5Usd: config.dexMinVolumeM5Usd,
       minMexcTurnover24h: config.minMexcTurnover24h,
+      paperTradeUsdSize: config.paperTradeUsdSize,
+      paperExitSpreadPct: config.paperExitSpreadPct,
+      paperStopSpreadPct: config.paperStopSpreadPct,
       dexPreferredChains: config.dexPreferredChains,
       dexPollMs: config.dexPollMs
     },
-    "Starting MEXC flip bot: DEX anchor / MEXC execution mode"
+    "Starting MEXC flip bot: DEX anchor + MEXC paper execution mode"
   );
 
   const handleNewContract = async (contract: MexcContract): Promise<void> => {
@@ -177,14 +183,85 @@ async function bootstrap(): Promise<void> {
             mexcBid: signal.mexcBid,
             mexcAsk: signal.mexcAsk,
             entryRef: signal.entryRef,
-            mexcBookSpreadPct: signal.mexcBookSpreadPct,
-            anchorAgeMs: signal.anchorAgeMs,
-            dexDriftPct: signal.dexDriftPct,
-            dexLiquidityUsd: signal.dexLiquidityUsd,
-            dexVolumeM5: signal.dexVolumeM5,
             reason: signal.reason
           },
           "DEX anchor deviation signal detected on MEXC"
+        );
+
+        const opened = paperExecution.onSignal(signal);
+
+        if (opened?.action === "OPEN") {
+          await paperTradesWriter.appendRow({
+            event: "OPEN",
+            id: opened.trade.id,
+            symbol: opened.trade.symbol,
+            direction: opened.trade.direction,
+            openedAt: opened.trade.openedAt,
+            entryPrice: opened.trade.entryPrice,
+            entryRef: opened.trade.entryRef,
+            qtyUsd: opened.trade.qtyUsd,
+            qtyToken: opened.trade.qtyToken,
+            dexAnchorAtEntry: opened.trade.dexAnchorAtEntry,
+            entrySpreadPct: opened.trade.entrySpreadPct,
+            openReason: opened.trade.openReason
+          });
+
+          logger.warn(
+            {
+              id: opened.trade.id,
+              symbol: opened.trade.symbol,
+              direction: opened.trade.direction,
+              entryPrice: opened.trade.entryPrice,
+              qtyUsd: opened.trade.qtyUsd,
+              qtyToken: opened.trade.qtyToken
+            },
+            "Paper trade opened"
+          );
+        }
+      }
+
+      const anchorStatus = spreadEngine.getAnchorStatus(ticker);
+      const closed = paperExecution.onTicker(ticker, anchorStatus);
+
+      if (closed?.action === "CLOSE") {
+        await paperTradesWriter.appendRow({
+          event: "CLOSE",
+          id: closed.trade.id,
+          symbol: closed.trade.symbol,
+          direction: closed.trade.direction,
+          openedAt: closed.trade.openedAt,
+          closedAt: closed.trade.closedAt,
+          entryPrice: closed.trade.entryPrice,
+          exitPrice: closed.trade.exitPrice,
+          entryRef: closed.trade.entryRef,
+          exitRef: closed.trade.exitRef,
+          qtyUsd: closed.trade.qtyUsd,
+          qtyToken: closed.trade.qtyToken,
+          dexAnchorAtEntry: closed.trade.dexAnchorAtEntry,
+          dexAnchorAtExit: closed.trade.dexAnchorAtExit,
+          entrySpreadPct: closed.trade.entrySpreadPct,
+          exitSpreadPct: closed.trade.exitSpreadPct,
+          grossPnlPct: closed.trade.grossPnlPct,
+          netPnlPct: closed.trade.netPnlPct,
+          grossPnlUsd: closed.trade.grossPnlUsd,
+          netPnlUsd: closed.trade.netPnlUsd,
+          holdMs: closed.trade.holdMs,
+          openReason: closed.trade.openReason,
+          closeReason: closed.trade.closeReason
+        });
+
+        logger.warn(
+          {
+            id: closed.trade.id,
+            symbol: closed.trade.symbol,
+            direction: closed.trade.direction,
+            entryPrice: closed.trade.entryPrice,
+            exitPrice: closed.trade.exitPrice,
+            netPnlPct: closed.trade.netPnlPct,
+            netPnlUsd: closed.trade.netPnlUsd,
+            closeReason: closed.trade.closeReason
+          },
+          "Paper trade closed"
         );
       }
     },
@@ -218,6 +295,7 @@ async function bootstrap(): Promise<void> {
       contractsWriter.close(),
       dexPricesWriter.close(),
       spreadSignalsWriter.close(),
+      paperTradesWriter.close(),
       dealsWriter.close(),
       depthWriter.close()
     ]);
