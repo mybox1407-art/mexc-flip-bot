@@ -47,6 +47,14 @@ export interface FlipSignal {
   reason: string;
 }
 
+export interface ContractWatchState {
+  symbol: string;
+  firstSeenAt: number;
+  lastCheckedAt: number | null;
+  lastMappedAt: number | null;
+  checksCount: number;
+}
+
 export interface CsvRow {
   [key: string]: string | number | boolean | null | undefined;
 }
