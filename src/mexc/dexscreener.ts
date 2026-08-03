@@ -1,159 +1,192 @@
 import { config } from "../config.js";
-import { logger } from "../logger.js";
 
-export interface DexPair {
+export type DexPair = {
   chainId: string;
   dexId: string;
   pairAddress: string;
+  url?: string;
+  pairCreatedAt?: number;
+
+  baseSymbol: string;
+  quoteSymbol: string;
+
   priceUsd: number;
   liquidityUsd: number;
   volumeM5: number;
   volumeH1: number;
-  baseTokenSymbol: string;
-  baseTokenAddress: string;
-  quoteTokenSymbol: string;
-  pairCreatedAt: number;
+  volumeH24: number;
+
+  buysM5: number;
+  sellsM5: number;
+};
+
+type DexSearchResponse = {
+  pairs?: Array<{
+    chainId?: string;
+    dexId?: string;
+    pairAddress?: string;
+    url?: string;
+    pairCreatedAt?: number;
+
+    priceUsd?: string;
+
+    baseToken?: {
+      symbol?: string;
+      name?: string;
+      address?: string;
+    };
+
+    quoteToken?: {
+      symbol?: string;
+      name?: string;
+      address?: string;
+    };
+
+    liquidity?: {
+      usd?: number;
+      base?: number;
+      quote?: number;
+    };
+
+    volume?: {
+      m5?: number;
+      h1?: number;
+      h6?: number;
+      h24?: number;
+    };
+
+    txns?: {
+      m5?: {
+        buys?: number;
+        sells?: number;
+      };
+    };
+  }>;
+};
+
+function normalizeSymbol(value: string | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
-interface RawDexPair {
-  chainId?: string;
-  dexId?: string;
-  pairAddress?: string;
-  priceUsd?: string;
-  liquidity?: { usd?: number };
-  volume?: { m5?: number; h1?: number };
-  baseToken?: { symbol?: string; address?: string };
-  quoteToken?: { symbol?: string };
-  pairCreatedAt?: number;
-}
-
-interface SearchResponse {
-  pairs?: RawDexPair[];
-}
-
-interface TokensResponse {
-  pairs?: RawDexPair[];
-}
-
-const BASE_URL = "https://api.dexscreener.com";
-
-function toDexPair(raw: RawDexPair): DexPair | null {
-  if (!raw.pairAddress || !raw.baseToken?.address) {
-    return null;
+function hoursSince(ts?: number): number {
+  if (!ts || ts <= 0) {
+    return Number.POSITIVE_INFINITY;
   }
 
-  return {
-    chainId: raw.chainId ?? "",
-    dexId: raw.dexId ?? "",
-    pairAddress: raw.pairAddress,
-    priceUsd: Number(raw.priceUsd ?? 0),
-    liquidityUsd: Number(raw.liquidity?.usd ?? 0),
-    volumeM5: Number(raw.volume?.m5 ?? 0),
-    volumeH1: Number(raw.volume?.h1 ?? 0),
-    baseTokenSymbol: raw.baseToken.symbol ?? "",
-    baseTokenAddress: raw.baseToken.address,
-    quoteTokenSymbol: raw.quoteToken?.symbol ?? "",
-    pairCreatedAt: raw.pairCreatedAt ?? 0
-  };
+  return (Date.now() - ts) / 3_600_000;
+}
+
+function chainPriority(chainId: string): number {
+  const idx = config.dexPreferredChains.indexOf(chainId);
+  if (idx === -1) {
+    return -100;
+  }
+
+  return (config.dexPreferredChains.length - idx) * 100;
+}
+
+function quotePriority(quoteSymbol: string): number {
+  const idx = config.dexQuotePriority.indexOf(normalizeSymbol(quoteSymbol));
+  if (idx === -1) {
+    return 0;
+  }
+
+  return (config.dexQuotePriority.length - idx) * 20;
 }
 
 export class DexScreenerClient {
-  private lastRequestAt = 0;
-  private readonly minIntervalMs = 300; // не более ~200 req/min
+  private readonly baseUrl = "https://api.dexscreener.com/latest/dex/search";
 
-  private async fetchJson<T>(url: string): Promise<T | null> {
-    const now = Date.now();
-    const wait = this.minIntervalMs - (now - this.lastRequestAt);
+  async findBestPairAcrossChains(baseCoin: string): Promise<DexPair | null> {
+    const query = encodeURIComponent(baseCoin.trim());
+    const response = await fetch(`${this.baseUrl}?q=${query}`);
 
-    if (wait > 0) {
-      await new Promise((resolve) => setTimeout(resolve, wait));
+    if (!response.ok) {
+      throw new Error(`DexScreener search failed: ${response.status}`);
     }
 
-    this.lastRequestAt = Date.now();
+    const data = (await response.json()) as DexSearchResponse;
+    const pairs = data.pairs ?? [];
 
-    try {
-      const response = await fetch(url, {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(8_000)
-      });
+    const normalizedBase = normalizeSymbol(baseCoin);
 
-      if (response.status === 429) {
-        logger.warn("DexScreener rate limit hit, backing off");
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        return null;
-      }
-
-      if (!response.ok) {
-        logger.warn({ status: response.status, url }, "DexScreener request failed");
-        return null;
-      }
-
-      return (await response.json()) as T;
-    } catch (error) {
-      logger.warn({ err: error, url }, "DexScreener request error");
-      return null;
-    }
-  }
-
-  async findBestSolanaPair(symbol: string): Promise<DexPair | null> {
-    const data = await this.fetchJson<SearchResponse>(
-      `${BASE_URL}/latest/dex/search?q=${encodeURIComponent(symbol)}`
-    );
-
-    if (!data?.pairs) {
-      return null;
-    }
-
-    const candidates = data.pairs
-      .map(toDexPair)
+    const candidates = pairs
+      .map((pair) => this.toDexPair(pair))
       .filter((pair): pair is DexPair => pair !== null)
-      .filter(
-        (pair) =>
-          pair.chainId === "solana" &&
-          pair.baseTokenSymbol.toUpperCase() === symbol.toUpperCase() &&
-          pair.priceUsd > 0 &&
-          pair.liquidityUsd >= config.dexMinLiquidityUsd &&
-          (pair.quoteTokenSymbol === "SOL" || pair.quoteTokenSymbol === "USDC")
-      );
+      .filter((pair) => config.dexPreferredChains.includes(pair.chainId))
+      .filter((pair) => normalizeSymbol(pair.baseSymbol) === normalizedBase)
+      .filter((pair) => pair.priceUsd > 0)
+      .filter((pair) => pair.liquidityUsd >= config.dexMinLiquidityUsd)
+      .filter((pair) => pair.volumeM5 >= config.dexMinVolume5mUsd)
+      .filter((pair) => hoursSince(pair.pairCreatedAt) <= config.dexMaxPairAgeHours);
 
     if (candidates.length === 0) {
       return null;
     }
 
-    candidates.sort((a, b) => b.liquidityUsd - a.liquidityUsd);
-    return candidates[0];
+    candidates.sort((a, b) => this.scorePair(b) - this.scorePair(a));
+
+    return candidates[0] ?? null;
   }
 
-  async getPairsByTokenAddresses(addresses: string[]): Promise<Map<string, DexPair>> {
-    const result = new Map<string, DexPair>();
+  private toDexPair(pair: DexSearchResponse["pairs"][number]): DexPair | null {
+    const chainId = String(pair.chainId ?? "").toLowerCase();
+    const dexId = String(pair.dexId ?? "").toLowerCase();
+    const pairAddress = String(pair.pairAddress ?? "");
+    const baseSymbol = String(pair.baseToken?.symbol ?? "").trim();
+    const quoteSymbol = String(pair.quoteToken?.symbol ?? "").trim();
 
-    if (addresses.length === 0) {
-      return result;
+    const priceUsd = Number(pair.priceUsd ?? 0);
+    const liquidityUsd = Number(pair.liquidity?.usd ?? 0);
+    const volumeM5 = Number(pair.volume?.m5 ?? 0);
+    const volumeH1 = Number(pair.volume?.h1 ?? 0);
+    const volumeH24 = Number(pair.volume?.h24 ?? 0);
+    const buysM5 = Number(pair.txns?.m5?.buys ?? 0);
+    const sellsM5 = Number(pair.txns?.m5?.sells ?? 0);
+
+    if (!chainId || !dexId || !pairAddress || !baseSymbol || !quoteSymbol) {
+      return null;
     }
 
-    const chunk = addresses.slice(0, 30);
-    const data = await this.fetchJson<TokensResponse>(
-      `${BASE_URL}/latest/dex/tokens/${chunk.join(",")}`
+    return {
+      chainId,
+      dexId,
+      pairAddress,
+      url: pair.url,
+      pairCreatedAt: pair.pairCreatedAt,
+
+      baseSymbol,
+      quoteSymbol,
+
+      priceUsd,
+      liquidityUsd,
+      volumeM5,
+      volumeH1,
+      volumeH24,
+
+      buysM5,
+      sellsM5
+    };
+  }
+
+  private scorePair(pair: DexPair): number {
+    const liquidityScore = Math.min(pair.liquidityUsd / 1_000, 500);
+    const volumeScore = Math.min(pair.volumeM5 / 500, 200);
+    const freshnessPenalty = Math.min(hoursSince(pair.pairCreatedAt), 720) * 0.15;
+    const activityScore = Math.min(pair.buysM5 + pair.sellsM5, 100);
+    const quoteScore = quotePriority(pair.quoteSymbol);
+    const chainScore = chainPriority(pair.chainId);
+
+    return (
+      liquidityScore +
+      volumeScore +
+      activityScore +
+      quoteScore +
+      chainScore -
+      freshnessPenalty
     );
-
-    if (!data?.pairs) {
-      return result;
-    }
-
-    for (const raw of data.pairs) {
-      const pair = toDexPair(raw);
-
-      if (!pair) {
-        continue;
-      }
-
-      const existing = result.get(pair.baseTokenAddress);
-
-      if (!existing || pair.liquidityUsd > existing.liquidityUsd) {
-        result.set(pair.baseTokenAddress, pair);
-      }
-    }
-
-    return result;
   }
 }
