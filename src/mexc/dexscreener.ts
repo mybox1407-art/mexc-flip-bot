@@ -1,229 +1,287 @@
 import { config } from "../config.js";
+import { logger } from "../logger.js";
 
 export interface DexPair {
   chainId: string;
   dexId: string;
   pairAddress: string;
-  url?: string;
-  pairCreatedAt?: number;
-
   baseTokenAddress: string;
-  baseSymbol: string;
   quoteTokenAddress: string;
+  baseSymbol: string;
   quoteSymbol: string;
-
-  priceUsd: number;
   liquidityUsd: number;
   volumeM5: number;
-  volumeH1: number;
-  volumeH24: number;
-
   buysM5: number;
   sellsM5: number;
-}
-
-interface DexScreenerSearchResponse {
-  pairs?: DexScreenerPairResponse[];
-}
-
-interface DexScreenerPairResponse {
-  chainId?: string;
-  dexId?: string;
-  url?: string;
-  pairAddress?: string;
+  priceUsd: number;
   pairCreatedAt?: number;
-  priceUsd?: string;
+}
 
-  baseToken?: {
-    address?: string;
-    name?: string;
-    symbol?: string;
-  };
-
-  quoteToken?: {
-    address?: string;
-    name?: string;
-    symbol?: string;
-  };
-
-  liquidity?: {
-    usd?: number;
-    base?: number;
-    quote?: number;
-  };
-
-  volume?: {
-    m5?: number;
-    h1?: number;
-    h6?: number;
-    h24?: number;
-  };
-
-  txns?: {
-    m5?: {
-      buys?: number;
-      sells?: number;
+interface DexSearchResponse {
+  pairs?: Array<{
+    chainId?: string;
+    dexId?: string;
+    pairAddress?: string;
+    priceUsd?: string;
+    pairCreatedAt?: number;
+    liquidity?: {
+      usd?: number;
     };
-  };
+    volume?: {
+      m5?: number;
+    };
+    txns?: {
+      m5?: {
+        buys?: number;
+        sells?: number;
+      };
+    };
+    baseToken?: {
+      address?: string;
+      symbol?: string;
+      name?: string;
+    };
+    quoteToken?: {
+      address?: string;
+      symbol?: string;
+      name?: string;
+    };
+  }>;
 }
 
-function normalizeSymbol(value: string | undefined): string {
-  return String(value ?? "")
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeSymbol(value: string): string {
+  return String(value)
     .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .toUpperCase()
+    .replace(/[_\-\/\s]/g, "");
 }
 
-function getPairAgeHours(pairCreatedAt?: number): number {
-  if (!pairCreatedAt || pairCreatedAt <= 0) {
-    return Number.POSITIVE_INFINITY;
+function isBlockedBaseSymbol(symbol: string): boolean {
+  const upper = symbol.toUpperCase();
+
+  if (/^\d{3,}/.test(upper)) {
+    return true;
   }
 
-  return (Date.now() - pairCreatedAt) / 3_600_000;
-}
+  const blockedFragments = [
+    "USD1",
+    "STOCK",
+    "NASDAQ",
+    "NAS100",
+    "SPX",
+    "DJI",
+    "TESLA",
+    "NVIDIA",
+    "APPLE",
+    "MSFT",
+    "SBUX",
+    "ARM",
+    "HD"
+  ];
 
-function getChainPriority(chainId: string): number {
-  const index = config.dexPreferredChains.indexOf(chainId);
-
-  if (index === -1) {
-    return -1000;
-  }
-
-  return (config.dexPreferredChains.length - index) * 100;
-}
-
-function getQuotePriority(quoteSymbol: string): number {
-  const normalized = normalizeSymbol(quoteSymbol);
-  const index = config.dexQuotePriority.indexOf(normalized);
-
-  if (index === -1) {
-    return 0;
-  }
-
-  return (config.dexQuotePriority.length - index) * 20;
+  return blockedFragments.some((fragment) => upper.includes(fragment));
 }
 
 export class DexScreenerClient {
-  private readonly searchUrl = "https://api.dexscreener.com/latest/dex/search";
-  private readonly tokenPairsUrl = "https://api.dexscreener.com/token-pairs/v1";
+  private readonly baseUrl = "https://api.dexscreener.com/latest/dex";
+  private lastRequestAt = 0;
+  private readonly minRequestGapMs = 450;
 
-  async findBestPairAcrossChains(baseCoin: string): Promise<DexPair | null> {
-    const query = encodeURIComponent(baseCoin.trim());
-    const response = await fetch(`${this.searchUrl}?q=${query}`);
+  private async throttle(): Promise<void> {
+    const now = Date.now();
+    const waitMs = this.lastRequestAt + this.minRequestGapMs - now;
 
-    if (!response.ok) {
-      throw new Error(`DexScreener search failed: ${response.status}`);
+    if (waitMs > 0) {
+      await sleep(waitMs);
     }
 
-    const data = (await response.json()) as DexScreenerSearchResponse;
-    const normalizedBaseCoin = normalizeSymbol(baseCoin);
-
-    const candidates = (data.pairs ?? [])
-      .map((pair) => this.mapPair(pair))
-      .filter((pair): pair is DexPair => pair !== null)
-      .filter((pair) => config.dexPreferredChains.includes(pair.chainId))
-      .filter((pair) => normalizeSymbol(pair.baseSymbol) === normalizedBaseCoin)
-      .filter((pair) => pair.priceUsd > 0)
-      .filter((pair) => pair.liquidityUsd >= config.dexMinLiquidityUsd)
-      .filter((pair) => pair.volumeM5 >= config.dexMinVolumeM5Usd)
-      .filter((pair) => getPairAgeHours(pair.pairCreatedAt) <= config.dexMaxPairAgeHours);
-
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    candidates.sort((a, b) => this.scorePair(b) - this.scorePair(a));
-
-    return candidates[0] ?? null;
+    this.lastRequestAt = Date.now();
   }
 
-  async getBestPairForToken(chainId: string, tokenAddress: string): Promise<DexPair | null> {
-    const normalizedChainId = String(chainId).trim().toLowerCase();
-    const normalizedTokenAddress = String(tokenAddress).trim();
+  private async fetchJsonWithRetry(url: string): Promise<DexSearchResponse> {
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      await this.throttle();
 
-    if (!normalizedChainId || !normalizedTokenAddress) {
+      const response = await fetch(url);
+
+      if (response.status === 429) {
+        const backoffMs = attempt * 2500;
+
+        logger.warn(
+          { url, attempt, backoffMs },
+          "DexScreener rate limited, backing off"
+        );
+
+        await sleep(backoffMs);
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`DexScreener search failed: ${response.status}`);
+      }
+
+      return (await response.json()) as DexSearchResponse;
+    }
+
+    throw new Error("DexScreener search failed: 429");
+  }
+
+  async findBestPairAcrossChains(query: string): Promise<DexPair | null> {
+    const normalizedQuery = normalizeSymbol(query);
+
+    if (!normalizedQuery || isBlockedBaseSymbol(normalizedQuery)) {
       return null;
     }
 
-    const response = await fetch(
-      `${this.tokenPairsUrl}/${encodeURIComponent(normalizedChainId)}/${encodeURIComponent(normalizedTokenAddress)}`
+    const url = `${this.baseUrl}/search?q=${encodeURIComponent(query)}`;
+    const payload = await this.fetchJsonWithRetry(url);
+
+    const pairs = payload.pairs ?? [];
+    const now = Date.now();
+    const maxPairAgeMs = config.dexMaxPairAgeHours * 3_600_000;
+
+    const candidates = pairs
+      .filter((pair) => {
+        const chainId = (pair.chainId ?? "").toLowerCase();
+        const quoteSymbol = (pair.quoteToken?.symbol ?? "").toLowerCase();
+        const baseSymbol = pair.baseToken?.symbol ?? "";
+        const liquidityUsd = Number(pair.liquidity?.usd ?? 0);
+        const volumeM5 = Number(pair.volume?.m5 ?? 0);
+        const buysM5 = Number(pair.txns?.m5?.buys ?? 0);
+        const sellsM5 = Number(pair.txns?.m5?.sells ?? 0);
+        const priceUsd = Number(pair.priceUsd ?? 0);
+        const pairCreatedAt = Number(pair.pairCreatedAt ?? 0);
+
+        if (!config.dexPreferredChains.includes(chainId)) {
+          return false;
+        }
+
+        if (!config.dexQuotePriority.includes(quoteSymbol)) {
+          return false;
+        }
+
+        if (isBlockedBaseSymbol(baseSymbol)) {
+          return false;
+        }
+
+        if (normalizeSymbol(baseSymbol) !== normalizedQuery) {
+          return false;
+        }
+
+        if (liquidityUsd < config.dexMinLiquidityUsd) {
+          return false;
+        }
+
+        if (volumeM5 < config.dexMinVolumeM5Usd) {
+          return false;
+        }
+
+        if (buysM5 + sellsM5 < config.minDexBuysSellsM5) {
+          return false;
+        }
+
+        if (!(priceUsd > 0)) {
+          return false;
+        }
+
+        if (pairCreatedAt > 0 && now - pairCreatedAt > maxPairAgeMs) {
+          return false;
+        }
+
+        return true;
+      })
+      .map((pair) => ({
+        chainId: (pair.chainId ?? "").toLowerCase(),
+        dexId: pair.dexId ?? "",
+        pairAddress: pair.pairAddress ?? "",
+        baseTokenAddress: pair.baseToken?.address ?? "",
+        quoteTokenAddress: pair.quoteToken?.address ?? "",
+        baseSymbol: pair.baseToken?.symbol ?? "",
+        quoteSymbol: pair.quoteToken?.symbol ?? "",
+        liquidityUsd: Number(pair.liquidity?.usd ?? 0),
+        volumeM5: Number(pair.volume?.m5 ?? 0),
+        buysM5: Number(pair.txns?.m5?.buys ?? 0),
+        sellsM5: Number(pair.txns?.m5?.sells ?? 0),
+        priceUsd: Number(pair.priceUsd ?? 0),
+        pairCreatedAt: Number(pair.pairCreatedAt ?? 0)
+      }))
+      .sort((a, b) => {
+        const quoteRankA = config.dexQuotePriority.indexOf(a.quoteSymbol.toLowerCase());
+        const quoteRankB = config.dexQuotePriority.indexOf(b.quoteSymbol.toLowerCase());
+
+        if (quoteRankA !== quoteRankB) {
+          return quoteRankA - quoteRankB;
+        }
+
+        if (b.liquidityUsd !== a.liquidityUsd) {
+          return b.liquidityUsd - a.liquidityUsd;
+        }
+
+        if (b.volumeM5 !== a.volumeM5) {
+          return b.volumeM5 - a.volumeM5;
+        }
+
+        return (b.pairCreatedAt ?? 0) - (a.pairCreatedAt ?? 0);
+      });
+
+    const best = candidates[0] ?? null;
+
+    if (!best) {
+      logger.debug({ query }, "DexScreener returned no valid pairs");
+      return null;
+    }
+
+    logger.debug(
+      {
+        query,
+        chainId: best.chainId,
+        dexId: best.dexId,
+        quoteSymbol: best.quoteSymbol,
+        liquidityUsd: best.liquidityUsd,
+        volumeM5: best.volumeM5
+      },
+      "DexScreener best pair selected"
     );
 
-    if (!response.ok) {
-      throw new Error(`DexScreener token-pairs failed: ${response.status}`);
-    }
+    return best;
+  }
 
-    const data = (await response.json()) as DexScreenerPairResponse[];
+  async getPairByChainAndAddress(
+    chainId: string,
+    pairAddress: string
+  ): Promise<DexPair | null> {
+    const url = `${this.baseUrl}/pairs/${encodeURIComponent(chainId)}/${encodeURIComponent(pairAddress)}`;
+    const payload = await this.fetchJsonWithRetry(url);
+    const pair = payload.pairs?.[0];
 
-    const candidates = data
-      .map((pair) => this.mapPair(pair))
-      .filter((pair): pair is DexPair => pair !== null)
-      .filter((pair) => pair.chainId === normalizedChainId)
-      .filter((pair) => pair.priceUsd > 0)
-      .filter((pair) => pair.liquidityUsd >= config.dexMinLiquidityUsd);
-
-    if (candidates.length === 0) {
+    if (!pair) {
       return null;
     }
 
-    candidates.sort((a, b) => this.scorePair(b) - this.scorePair(a));
-
-    return candidates[0] ?? null;
-  }
-
-  private mapPair(pair: DexScreenerPairResponse): DexPair | null {
-    const chainId = String(pair.chainId ?? "").trim().toLowerCase();
-    const dexId = String(pair.dexId ?? "").trim().toLowerCase();
-    const pairAddress = String(pair.pairAddress ?? "").trim();
-
-    const baseTokenAddress = String(pair.baseToken?.address ?? "").trim();
-    const baseSymbol = String(pair.baseToken?.symbol ?? "").trim();
-    const quoteTokenAddress = String(pair.quoteToken?.address ?? "").trim();
-    const quoteSymbol = String(pair.quoteToken?.symbol ?? "").trim();
-
     const priceUsd = Number(pair.priceUsd ?? 0);
-    const liquidityUsd = Number(pair.liquidity?.usd ?? 0);
-    const volumeM5 = Number(pair.volume?.m5 ?? 0);
-    const volumeH1 = Number(pair.volume?.h1 ?? 0);
-    const volumeH24 = Number(pair.volume?.h24 ?? 0);
-    const buysM5 = Number(pair.txns?.m5?.buys ?? 0);
-    const sellsM5 = Number(pair.txns?.m5?.sells ?? 0);
 
-    if (!chainId || !dexId || !pairAddress || !baseSymbol || !quoteSymbol) {
+    if (!(priceUsd > 0)) {
       return null;
     }
 
     return {
-      chainId,
-      dexId,
-      pairAddress,
-      url: pair.url,
-      pairCreatedAt: pair.pairCreatedAt,
-
-      baseTokenAddress,
-      baseSymbol,
-      quoteTokenAddress,
-      quoteSymbol,
-
+      chainId: (pair.chainId ?? "").toLowerCase(),
+      dexId: pair.dexId ?? "",
+      pairAddress: pair.pairAddress ?? "",
+      baseTokenAddress: pair.baseToken?.address ?? "",
+      quoteTokenAddress: pair.quoteToken?.address ?? "",
+      baseSymbol: pair.baseToken?.symbol ?? "",
+      quoteSymbol: pair.quoteToken?.symbol ?? "",
+      liquidityUsd: Number(pair.liquidity?.usd ?? 0),
+      volumeM5: Number(pair.volume?.m5 ?? 0),
+      buysM5: Number(pair.txns?.m5?.buys ?? 0),
+      sellsM5: Number(pair.txns?.m5?.sells ?? 0),
       priceUsd,
-      liquidityUsd,
-      volumeM5,
-      volumeH1,
-      volumeH24,
-
-      buysM5,
-      sellsM5
+      pairCreatedAt: Number(pair.pairCreatedAt ?? 0)
     };
-  }
-
-  private scorePair(pair: DexPair): number {
-    const chainScore = getChainPriority(pair.chainId);
-    const quoteScore = getQuotePriority(pair.quoteSymbol);
-    const liquidityScore = Math.min(pair.liquidityUsd / 1_000, 500);
-    const volumeScore = Math.min(pair.volumeM5 / 500, 200);
-    const activityScore = Math.min(pair.buysM5 + pair.sellsM5, 100);
-    const agePenalty = Math.min(getPairAgeHours(pair.pairCreatedAt), 720) * 0.15;
-
-    return chainScore + quoteScore + liquidityScore + volumeScore + activityScore - agePenalty;
   }
 }
