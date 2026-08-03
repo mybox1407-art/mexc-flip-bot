@@ -11,6 +11,7 @@ import { ContractWatcher } from "./services/contract-watcher.js";
 import { DexPricePoller } from "./services/dex-price-poller.js";
 import { SpreadEngine } from "./services/spread-engine.js";
 import { PaperExecutionService } from "./services/paper-execution.js";
+import { TelegramNotifier } from "./services/telegram-notifier.js";
 import type { CsvRow, MexcContract, MexcTicker } from "./types.js";
 
 function shouldSkipDexLookup(symbol: string): boolean {
@@ -40,8 +41,13 @@ async function bootstrap(): Promise<void> {
   const dexMapper = new DexMapper();
   const spreadEngine = new SpreadEngine();
   const paperExecution = new PaperExecutionService();
+  const telegramNotifier = new TelegramNotifier(
+    config.telegramBotToken,
+    config.telegramChatId
+  );
 
   await dexMapper.load();
+  await telegramNotifier.sendStartup();
 
   logger.info(
     {
@@ -54,7 +60,8 @@ async function bootstrap(): Promise<void> {
       paperExitSpreadPct: config.paperExitSpreadPct,
       paperStopSpreadPct: config.paperStopSpreadPct,
       dexPreferredChains: config.dexPreferredChains,
-      dexPollMs: config.dexPollMs
+      dexPollMs: config.dexPollMs,
+      telegramEnabled: telegramNotifier.enabled
     },
     "Starting MEXC flip bot: DEX anchor + MEXC paper execution mode"
   );
@@ -183,6 +190,8 @@ async function bootstrap(): Promise<void> {
             openReason: opened.trade.openReason
           });
 
+          await telegramNotifier.sendTradeOpened(opened.trade);
+
           logger.warn(
             {
               id: opened.trade.id,
@@ -226,6 +235,8 @@ async function bootstrap(): Promise<void> {
           openReason: closed.trade.openReason,
           closeReason: closed.trade.closeReason
         });
+
+        await telegramNotifier.sendTradeClosed(closed.trade);
 
         logger.warn(
           {
