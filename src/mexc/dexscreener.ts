@@ -1,13 +1,15 @@
 import { config } from "../config.js";
 
-export type DexPair = {
+export interface DexPair {
   chainId: string;
   dexId: string;
   pairAddress: string;
   url?: string;
   pairCreatedAt?: number;
 
+  baseTokenAddress: string;
   baseSymbol: string;
+  quoteTokenAddress: string;
   quoteSymbol: string;
 
   priceUsd: number;
@@ -18,51 +20,52 @@ export type DexPair = {
 
   buysM5: number;
   sellsM5: number;
-};
+}
 
-type DexSearchResponse = {
-  pairs?: Array<{
-    chainId?: string;
-    dexId?: string;
-    pairAddress?: string;
-    url?: string;
-    pairCreatedAt?: number;
+interface DexScreenerSearchResponse {
+  pairs?: DexScreenerPairResponse[];
+}
 
-    priceUsd?: string;
+interface DexScreenerPairResponse {
+  chainId?: string;
+  dexId?: string;
+  url?: string;
+  pairAddress?: string;
+  pairCreatedAt?: number;
+  priceUsd?: string;
 
-    baseToken?: {
-      symbol?: string;
-      name?: string;
-      address?: string;
+  baseToken?: {
+    address?: string;
+    name?: string;
+    symbol?: string;
+  };
+
+  quoteToken?: {
+    address?: string;
+    name?: string;
+    symbol?: string;
+  };
+
+  liquidity?: {
+    usd?: number;
+    base?: number;
+    quote?: number;
+  };
+
+  volume?: {
+    m5?: number;
+    h1?: number;
+    h6?: number;
+    h24?: number;
+  };
+
+  txns?: {
+    m5?: {
+      buys?: number;
+      sells?: number;
     };
-
-    quoteToken?: {
-      symbol?: string;
-      name?: string;
-      address?: string;
-    };
-
-    liquidity?: {
-      usd?: number;
-      base?: number;
-      quote?: number;
-    };
-
-    volume?: {
-      m5?: number;
-      h1?: number;
-      h6?: number;
-      h24?: number;
-    };
-
-    txns?: {
-      m5?: {
-        buys?: number;
-        sells?: number;
-      };
-    };
-  }>;
-};
+  };
+}
 
 function normalizeSymbol(value: string | undefined): string {
   return String(value ?? "")
@@ -71,30 +74,33 @@ function normalizeSymbol(value: string | undefined): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
-function hoursSince(ts?: number): number {
-  if (!ts || ts <= 0) {
+function getPairAgeHours(pairCreatedAt?: number): number {
+  if (!pairCreatedAt || pairCreatedAt <= 0) {
     return Number.POSITIVE_INFINITY;
   }
 
-  return (Date.now() - ts) / 3_600_000;
+  return (Date.now() - pairCreatedAt) / 3_600_000;
 }
 
-function chainPriority(chainId: string): number {
-  const idx = config.dexPreferredChains.indexOf(chainId);
-  if (idx === -1) {
-    return -100;
+function getChainPriority(chainId: string): number {
+  const index = config.dexPreferredChains.indexOf(chainId);
+
+  if (index === -1) {
+    return -1000;
   }
 
-  return (config.dexPreferredChains.length - idx) * 100;
+  return (config.dexPreferredChains.length - index) * 100;
 }
 
-function quotePriority(quoteSymbol: string): number {
-  const idx = config.dexQuotePriority.indexOf(normalizeSymbol(quoteSymbol));
-  if (idx === -1) {
+function getQuotePriority(quoteSymbol: string): number {
+  const normalized = normalizeSymbol(quoteSymbol);
+  const index = config.dexQuotePriority.indexOf(normalized);
+
+  if (index === -1) {
     return 0;
   }
 
-  return (config.dexQuotePriority.length - idx) * 20;
+  return (config.dexQuotePriority.length - index) * 20;
 }
 
 export class DexScreenerClient {
@@ -108,20 +114,18 @@ export class DexScreenerClient {
       throw new Error(`DexScreener search failed: ${response.status}`);
     }
 
-    const data = (await response.json()) as DexSearchResponse;
-    const pairs = data.pairs ?? [];
+    const data = (await response.json()) as DexScreenerSearchResponse;
+    const normalizedBaseCoin = normalizeSymbol(baseCoin);
 
-    const normalizedBase = normalizeSymbol(baseCoin);
-
-    const candidates = pairs
-      .map((pair) => this.toDexPair(pair))
+    const candidates = (data.pairs ?? [])
+      .map((pair) => this.mapPair(pair))
       .filter((pair): pair is DexPair => pair !== null)
       .filter((pair) => config.dexPreferredChains.includes(pair.chainId))
-      .filter((pair) => normalizeSymbol(pair.baseSymbol) === normalizedBase)
+      .filter((pair) => normalizeSymbol(pair.baseSymbol) === normalizedBaseCoin)
       .filter((pair) => pair.priceUsd > 0)
       .filter((pair) => pair.liquidityUsd >= config.dexMinLiquidityUsd)
-      .filter((pair) => pair.volumeM5 >= config.dexMinVolume5mUsd)
-      .filter((pair) => hoursSince(pair.pairCreatedAt) <= config.dexMaxPairAgeHours);
+      .filter((pair) => pair.volumeM5 >= config.dexMinVolumeM5Usd)
+      .filter((pair) => getPairAgeHours(pair.pairCreatedAt) <= config.dexMaxPairAgeHours);
 
     if (candidates.length === 0) {
       return null;
@@ -132,11 +136,14 @@ export class DexScreenerClient {
     return candidates[0] ?? null;
   }
 
-  private toDexPair(pair: DexSearchResponse["pairs"][number]): DexPair | null {
-    const chainId = String(pair.chainId ?? "").toLowerCase();
-    const dexId = String(pair.dexId ?? "").toLowerCase();
-    const pairAddress = String(pair.pairAddress ?? "");
+  private mapPair(pair: DexScreenerPairResponse): DexPair | null {
+    const chainId = String(pair.chainId ?? "").trim().toLowerCase();
+    const dexId = String(pair.dexId ?? "").trim().toLowerCase();
+    const pairAddress = String(pair.pairAddress ?? "").trim();
+
+    const baseTokenAddress = String(pair.baseToken?.address ?? "").trim();
     const baseSymbol = String(pair.baseToken?.symbol ?? "").trim();
+    const quoteTokenAddress = String(pair.quoteToken?.address ?? "").trim();
     const quoteSymbol = String(pair.quoteToken?.symbol ?? "").trim();
 
     const priceUsd = Number(pair.priceUsd ?? 0);
@@ -158,7 +165,9 @@ export class DexScreenerClient {
       url: pair.url,
       pairCreatedAt: pair.pairCreatedAt,
 
+      baseTokenAddress,
       baseSymbol,
+      quoteTokenAddress,
       quoteSymbol,
 
       priceUsd,
@@ -173,20 +182,13 @@ export class DexScreenerClient {
   }
 
   private scorePair(pair: DexPair): number {
+    const chainScore = getChainPriority(pair.chainId);
+    const quoteScore = getQuotePriority(pair.quoteSymbol);
     const liquidityScore = Math.min(pair.liquidityUsd / 1_000, 500);
     const volumeScore = Math.min(pair.volumeM5 / 500, 200);
-    const freshnessPenalty = Math.min(hoursSince(pair.pairCreatedAt), 720) * 0.15;
     const activityScore = Math.min(pair.buysM5 + pair.sellsM5, 100);
-    const quoteScore = quotePriority(pair.quoteSymbol);
-    const chainScore = chainPriority(pair.chainId);
+    const agePenalty = Math.min(getPairAgeHours(pair.pairCreatedAt), 720) * 0.15;
 
-    return (
-      liquidityScore +
-      volumeScore +
-      activityScore +
-      quoteScore +
-      chainScore -
-      freshnessPenalty
-    );
+    return chainScore + quoteScore + liquidityScore + volumeScore + activityScore - agePenalty;
   }
 }
