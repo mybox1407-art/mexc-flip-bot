@@ -1,122 +1,57 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+import { CsvWriter } from "./storage/csv-writer.js";
+import { DexMappingStore } from "./storage/dex-mapping-store.js";
 import { MexcFuturesRestClient } from "./mexc/futures-rest.js";
 import { MexcFuturesWsClient } from "./mexc/futures-ws.js";
 import { DexScreenerClient } from "./mexc/dexscreener.js";
 import { ContractWatcher } from "./services/contract-watcher.js";
-import { CsvWriter } from "./services/csv-writer.js";
-import { DexMapper } from "./services/dex-mapper.js";
 import { DexPricePoller } from "./services/dex-price-poller.js";
 import { SpreadEngine } from "./services/spread-engine.js";
-import { dateStamp, isoNow } from "./utils/time.js";
-import type { MexcContract } from "./types.js";
+import type { MexcContract, MexcTicker } from "./types.js";
 
-const csv = new CsvWriter();
-const restClient = new MexcFuturesRestClient();
-const dexClient = new DexScreenerClient();
-const dexMapper = new DexMapper();
-const spreadEngine = new SpreadEngine();
+function shouldSkipDexLookup(symbol: string): boolean {
+  const upper = symbol.toUpperCase();
+  const base = upper.split("_")[0] ?? upper;
 
-const wsClient = new MexcFuturesWsClient({
-  onTicker: (ticker) => {
-    const signal = spreadEngine.evaluate(ticker);
-
-    if (!signal) {
-      return;
-    }
-
-    logger.info(signal, "DEX-MEXC spread signal detected");
-    void csv.append(`spread-signals-${dateStamp()}.csv`, signal);
-  },
-
-  onDeal: (symbol, payload) => {
-    void csv.append(`deals-${dateStamp()}.csv`, {
-      timestamp: isoNow(),
-      symbol,
-      payload: JSON.stringify(payload)
-    });
-  },
-
-  onDepth: (symbol, payload) => {
-    void csv.append(`depth-${dateStamp()}.csv`, {
-      timestamp: isoNow(),
-      symbol,
-      payload: JSON.stringify(payload)
-    });
-  }
-});
-
-const dexPoller = new DexPricePoller(dexClient, dexMapper, (mexcSymbol, pair) => {
-  spreadEngine.updateDexPrice(mexcSymbol, pair);
-
-  void csv.append(`dex-prices-${dateStamp()}.csv`, {
-    timestamp: isoNow(),
-    mexcSymbol,
-    dexPrice: pair.priceUsd,
-    liquidityUsd: pair.liquidityUsd,
-    volumeM5: pair.volumeM5,
-    dexId: pair.dexId,
-    chainId: pair.chainId,
-    quoteSymbol: pair.quoteSymbol
-  });
-});
-
-async function handleNewContract(contract: MexcContract): Promise<void> {
-  const baseCoin = String(contract.baseCoin ?? contract.symbol.split("_")[0]);
-
-  await csv.append(`new-contracts-${dateStamp()}.csv`, {
-    detectedAt: isoNow(),
-    symbol: contract.symbol,
-    baseCoin,
-    maxLeverage: contract.maxLeverage
-  });
-
-  wsClient.subscribeDeals(contract.symbol);
-  wsClient.subscribeDepth(contract.symbol);
-
-  if (dexMapper.get(contract.symbol)) {
-    return;
+  if (upper.includes("_USD1")) {
+    return true;
   }
 
-  const pair = await dexClient.findBestPairAcrossChains(baseCoin);
-
-  if (!pair) {
-    logger.warn(
-      { symbol: contract.symbol, baseCoin, chains: config.dexPreferredChains },
-      "No supported DEX pair found for new contract"
-    );
-    await dexMapper.markNotFound(contract.symbol, baseCoin);
-    return;
+  if (base.includes("STOCK")) {
+    return true;
   }
 
-  const mapping = await dexMapper.addFromPair(contract.symbol, baseCoin, pair);
+  if (/(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD)/.test(base)) {
+    return true;
+  }
 
-  logger.info(
-    {
-      symbol: contract.symbol,
-      chainId: mapping.chainId,
-      dexPair: mapping.dexPairAddress,
-      liquidity: mapping.liquidityUsd,
-      dexId: mapping.dexId,
-      quoteSymbol: mapping.quoteSymbol
-    },
-    "Mapped MEXC contract to multi-chain DEX pair"
-  );
-}
+  if (/^\d{3,}/.test(base)) {
+    return true;
+  }
 
-const contractWatcher = new ContractWatcher(restClient, handleNewContract);
-
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-
-function shutdown(signal: string): void {
-  logger.info({ signal }, "Shutdown started");
-  wsClient.stop();
-  dexPoller.stop();
-  process.exit(0);
+  return false;
 }
 
 async function bootstrap(): Promise<void> {
+  await mkdir(config.dataDir, { recursive: true });
+
+  const contractsWriter = new CsvWriter(path.join(config.dataDir, "new-contracts.csv"));
+  const dexPricesWriter = new CsvWriter(path.join(config.dataDir, "dex-prices.csv"));
+  const spreadSignalsWriter = new CsvWriter(path.join(config.dataDir, "spread-signals.csv"));
+  const dealsWriter = new CsvWriter(path.join(config.dataDir, "deals.csv"));
+  const depthWriter = new CsvWriter(path.join(config.dataDir, "depth.csv"));
+
+  const mexcRestClient = new MexcFuturesRestClient(config.mexcRestUrl);
+  const mexcWsClient = new MexcFuturesWsClient(config.mexcWsUrl);
+  const dexScreenerClient = new DexScreenerClient();
+  const dexMappingStore = new DexMappingStore(path.join(config.dataDir, "dex-mapping.json"));
+  const spreadEngine = new SpreadEngine();
+
+  await dexMappingStore.load();
+
   logger.info(
     {
       minSpreadPct: config.minSpreadPct,
@@ -128,10 +63,160 @@ async function bootstrap(): Promise<void> {
     "Starting MEXC flip bot: multi-chain DEX-MEXC spread mode"
   );
 
-  await dexMapper.load();
-  wsClient.connect();
-  dexPoller.start();
+  const handleNewContract = async (contract: MexcContract): Promise<void> => {
+    await contractsWriter.appendRow({
+      detectedAt: new Date().toISOString(),
+      symbol: contract.symbol,
+      displayName: contract.displayName ?? "",
+      baseCoin: contract.baseCoin ?? "",
+      quoteCoin: contract.quoteCoin ?? "",
+      settleCoin: contract.settleCoin ?? "",
+      maxLeverage: contract.maxLeverage ?? "",
+      contractSize: contract.contractSize ?? ""
+    });
+
+    if (shouldSkipDexLookup(contract.symbol)) {
+      logger.info(
+        {
+          symbol: contract.symbol,
+          displayName: contract.displayName,
+          baseCoin: contract.baseCoin
+        },
+        "Skipping DEX lookup for unsupported synthetic contract"
+      );
+      return;
+    }
+
+    const pair = await dexScreenerClient.findBestPairAcrossChains(
+      contract.baseCoin ?? contract.symbol.split("_")[0] ?? contract.symbol
+    );
+
+    if (!pair) {
+      logger.info(
+        {
+          symbol: contract.symbol,
+          baseCoin: contract.baseCoin
+        },
+        "No supported DEX pair found for new contract"
+      );
+      return;
+    }
+
+    await dexMappingStore.upsert({
+      mexcSymbol: contract.symbol,
+      chainId: pair.chainId,
+      dexId: pair.dexId,
+      pairAddress: pair.pairAddress,
+      baseTokenAddress: pair.baseTokenAddress,
+      quoteTokenAddress: pair.quoteTokenAddress,
+      quoteSymbol: pair.quoteSymbol,
+      liquidityUsd: pair.liquidityUsd,
+      volumeM5: pair.volumeM5,
+      priceUsd: pair.priceUsd,
+      status: "active",
+      updatedAt: new Date().toISOString()
+    });
+
+    logger.info(
+      {
+        symbol: contract.symbol,
+        chainId: pair.chainId,
+        dexId: pair.dexId,
+        quoteSymbol: pair.quoteSymbol,
+        liquidityUsd: pair.liquidityUsd,
+        volumeM5: pair.volumeM5,
+        priceUsd: pair.priceUsd
+      },
+      "Mapped MEXC contract to multi-chain DEX pair"
+    );
+  };
+
+  const contractWatcher = new ContractWatcher(mexcRestClient, handleNewContract);
+
+  const dexPricePoller = new DexPricePoller(
+    dexScreenerClient,
+    dexMappingStore,
+    async (mapping, pair) => {
+      spreadEngine.updateDexPrice(mapping.mexcSymbol, pair);
+
+      await dexPricesWriter.appendRow({
+        timestamp: new Date().toISOString(),
+        mexcSymbol: mapping.mexcSymbol,
+        dexPrice: pair.priceUsd,
+        liquidityUsd: pair.liquidityUsd,
+        volumeM5: pair.volumeM5,
+        buysM5: pair.buysM5,
+        sellsM5: pair.sellsM5,
+        dexId: pair.dexId,
+        chainId: pair.chainId,
+        quoteSymbol: pair.quoteSymbol,
+        pairAddress: pair.pairAddress
+      });
+    }
+  );
+
+  mexcWsClient.onTicker(async (ticker: MexcTicker) => {
+    const signal = spreadEngine.evaluate(ticker);
+
+    if (signal) {
+      await spreadSignalsWriter.appendRow(signal);
+
+      logger.warn(
+        {
+          symbol: signal.symbol,
+          direction: signal.direction,
+          spreadPct: signal.spreadPct,
+          netEdgePct: signal.netEdgePct,
+          priceDeviationPct: signal.priceDeviationPct,
+          dexPrice: signal.dexPrice,
+          mexcPrice: signal.mexcPrice,
+          dexLiquidityUsd: signal.dexLiquidityUsd,
+          dexVolumeM5: signal.dexVolumeM5
+        },
+        "DEX-MEXC spread signal detected"
+      );
+    }
+  });
+
+  mexcWsClient.onDeal(async (deal) => {
+    await dealsWriter.appendRow(deal);
+  });
+
+  mexcWsClient.onDepth(async (depth) => {
+    await depthWriter.appendRow(depth);
+  });
+
+  await mexcWsClient.connect();
   await contractWatcher.start();
+  dexPricePoller.start();
+
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, "Shutting down bot");
+
+    dexPricePoller.stop();
+    mexcWsClient.close();
+
+    await Promise.all([
+      contractsWriter.close(),
+      dexPricesWriter.close(),
+      spreadSignalsWriter.close(),
+      dealsWriter.close(),
+      depthWriter.close()
+    ]);
+
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
+  });
+
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
+  });
 }
 
-void bootstrap();
+bootstrap().catch((error) => {
+  logger.error({ err: error }, "Bot crashed");
+  process.exit(1);
+});
