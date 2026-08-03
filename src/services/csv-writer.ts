@@ -1,48 +1,46 @@
-import { appendFile, mkdir, stat } from "node:fs/promises";
+// src/services/csv-writer.ts — новая версия
+import { appendFile, close as fsClose, mkdir, open, stat } from "node:fs/promises";
 import path from "node:path";
-import { config } from "../config.js";
 import type { CsvRow } from "../types.js";
 
 function escapeCsv(value: CsvRow[string]): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-
+  if (value === null || value === undefined) return "";
   const text = String(value);
-
-  if (text.includes(",") || text.includes("\"") || text.includes("\n")) {
-    return `"${text.replaceAll("\"", "\"\"")}"`;
+  if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+    return `"${text.replaceAll('"', '""')}"`;
   }
-
   return text;
 }
 
 export class CsvWriter {
-  private readonly initialized = new Set<string>();
+  private readonly filePath: string;
+  private initialized = false;
+  private fd?: import("node:fs/promises").FileHandle;
 
-  async append(fileName: string, row: CsvRow): Promise<void> {
-    await mkdir(config.dataDir, { recursive: true });
-
-    const fullPath = path.join(config.dataDir, fileName);
-    const columns = Object.keys(row);
-    const exists = await this.fileExistsAndNotEmpty(fullPath);
-
-    const header = columns.join(",");
-    const line = columns.map((column) => escapeCsv(row[column])).join(",");
-
-    const output =
-      !exists && !this.initialized.has(fullPath)
-        ? `${header}\n${line}\n`
-        : `${line}\n`;
-
-    await appendFile(fullPath, output, "utf8");
-    this.initialized.add(fullPath);
+  constructor(filePath: string) {
+    this.filePath = filePath;
   }
 
-  private async fileExistsAndNotEmpty(filePath: string): Promise<boolean> {
+  async appendRow(row: CsvRow): Promise<void> {
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    const columns = Object.keys(row);
+    const exists = await this.fileExistsAndNotEmpty();
+    const line = columns.map((c) => escapeCsv(row[c])).join(",");
+    const output = (!exists && !this.initialized)
+      ? `${columns.join(",")}\n${line}\n`
+      : `${line}\n`;
+    await appendFile(this.filePath, output, "utf8");
+    this.initialized = true;
+  }
+
+  async close(): Promise<void> {
+    // appendFile не держит хендл открытым — ничего закрывать не нужно
+  }
+
+  private async fileExistsAndNotEmpty(): Promise<boolean> {
     try {
-      const file = await stat(filePath);
-      return file.size > 0;
+      const s = await stat(this.filePath);
+      return s.size > 0;
     } catch {
       return false;
     }
