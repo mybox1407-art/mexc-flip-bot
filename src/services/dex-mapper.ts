@@ -7,10 +7,14 @@ import type { DexPair } from "../mexc/dexscreener.js";
 export interface TokenMapping {
   mexcSymbol: string;
   baseCoin: string;
-  solanaTokenAddress: string;
+  chainId: string;
+  baseTokenAddress: string;
+  quoteTokenAddress: string;
+  quoteSymbol: string;
   dexPairAddress: string;
   dexId: string;
   liquidityUsd: number;
+  pairCreatedAt?: number;
   mappedAt: string;
   status: "active" | "not_found" | "blacklisted";
 }
@@ -52,17 +56,25 @@ export class DexMapper {
   }
 
   getActive(): TokenMapping[] {
-    return [...this.mappings.values()].filter((m) => m.status === "active");
+    return [...this.mappings.values()].filter((mapping) => mapping.status === "active");
   }
 
-  async addFromPair(mexcSymbol: string, baseCoin: string, pair: DexPair): Promise<TokenMapping> {
+  async addFromPair(
+    mexcSymbol: string,
+    baseCoin: string,
+    pair: DexPair
+  ): Promise<TokenMapping> {
     const mapping: TokenMapping = {
       mexcSymbol,
       baseCoin,
-      solanaTokenAddress: pair.baseTokenAddress,
+      chainId: pair.chainId,
+      baseTokenAddress: pair.baseTokenAddress,
+      quoteTokenAddress: pair.quoteTokenAddress,
+      quoteSymbol: pair.quoteSymbol,
       dexPairAddress: pair.pairAddress,
       dexId: pair.dexId,
       liquidityUsd: pair.liquidityUsd,
+      pairCreatedAt: pair.pairCreatedAt,
       mappedAt: new Date().toISOString(),
       status: "active"
     };
@@ -76,13 +88,18 @@ export class DexMapper {
     this.mappings.set(mexcSymbol, {
       mexcSymbol,
       baseCoin,
-      solanaTokenAddress: "",
+      chainId: "",
+      baseTokenAddress: "",
+      quoteTokenAddress: "",
+      quoteSymbol: "",
       dexPairAddress: "",
       dexId: "",
       liquidityUsd: 0,
+      pairCreatedAt: undefined,
       mappedAt: new Date().toISOString(),
       status: "not_found"
     });
+
     await this.save();
   }
 }
