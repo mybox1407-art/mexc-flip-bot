@@ -72,7 +72,11 @@ export const config = {
 
   signalConfirmTicks: numberEnv("SIGNAL_CONFIRM_TICKS", 3),
   signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 180_000),
-  signalTtlMs: numberEnv("SIGNAL_TTL_MS", 900_000),
+
+  paperTradeUsdSize: numberEnv("PAPER_TRADE_USD_SIZE", 100),
+  paperExitSpreadPct: numberEnv("PAPER_EXIT_SPREAD_PCT", 0.25),
+  paperStopSpreadPct: numberEnv("PAPER_STOP_SPREAD_PCT", 0.7),
+  paperMaxHoldMs: numberEnv("PAPER_MAX_HOLD_MS", 15 * 60 * 1000),
 
   startupBackfillCount: numberEnv("STARTUP_BACKFILL_COUNT", 20),
   startupLookbackHours: numberEnv("STARTUP_LOOKBACK_HOURS", 72),
