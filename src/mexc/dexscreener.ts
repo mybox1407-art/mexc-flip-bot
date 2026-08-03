@@ -104,11 +104,12 @@ function getQuotePriority(quoteSymbol: string): number {
 }
 
 export class DexScreenerClient {
-  private readonly baseUrl = "https://api.dexscreener.com/latest/dex/search";
+  private readonly searchUrl = "https://api.dexscreener.com/latest/dex/search";
+  private readonly tokenPairsUrl = "https://api.dexscreener.com/token-pairs/v1";
 
   async findBestPairAcrossChains(baseCoin: string): Promise<DexPair | null> {
     const query = encodeURIComponent(baseCoin.trim());
-    const response = await fetch(`${this.baseUrl}?q=${query}`);
+    const response = await fetch(`${this.searchUrl}?q=${query}`);
 
     if (!response.ok) {
       throw new Error(`DexScreener search failed: ${response.status}`);
@@ -126,6 +127,40 @@ export class DexScreenerClient {
       .filter((pair) => pair.liquidityUsd >= config.dexMinLiquidityUsd)
       .filter((pair) => pair.volumeM5 >= config.dexMinVolumeM5Usd)
       .filter((pair) => getPairAgeHours(pair.pairCreatedAt) <= config.dexMaxPairAgeHours);
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((a, b) => this.scorePair(b) - this.scorePair(a));
+
+    return candidates[0] ?? null;
+  }
+
+  async getBestPairForToken(chainId: string, tokenAddress: string): Promise<DexPair | null> {
+    const normalizedChainId = String(chainId).trim().toLowerCase();
+    const normalizedTokenAddress = String(tokenAddress).trim();
+
+    if (!normalizedChainId || !normalizedTokenAddress) {
+      return null;
+    }
+
+    const response = await fetch(
+      `${this.tokenPairsUrl}/${encodeURIComponent(normalizedChainId)}/${encodeURIComponent(normalizedTokenAddress)}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`DexScreener token-pairs failed: ${response.status}`);
+    }
+
+    const data = (await response.json()) as DexScreenerPairResponse[];
+
+    const candidates = data
+      .map((pair) => this.mapPair(pair))
+      .filter((pair): pair is DexPair => pair !== null)
+      .filter((pair) => pair.chainId === normalizedChainId)
+      .filter((pair) => pair.priceUsd > 0)
+      .filter((pair) => pair.liquidityUsd >= config.dexMinLiquidityUsd);
 
     if (candidates.length === 0) {
       return null;
