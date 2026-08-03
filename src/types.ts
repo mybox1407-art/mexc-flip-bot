@@ -40,13 +40,17 @@ export interface FlipSignal {
   spreadPct: number;
   netEdgePct: number;
   priceDeviationPct: number;
+
   currentPrice: number;
   referencePrice: number;
+  movePct: number;
+
   dexPrice: number;
   mexcPrice: number;
   mexcBid: number;
   mexcAsk: number;
   mexcTurnover24h: number;
+
   dexLiquidityUsd: number;
   dexVolumeM5: number;
   dexBuysM5: number;
@@ -55,6 +59,7 @@ export interface FlipSignal {
   chainId: string;
   quoteSymbol: string;
   dexPairAddress: string;
+
   entryRef: "ASK" | "BID";
   mexcBookSpreadPct: number;
   anchorAgeMs: number;
