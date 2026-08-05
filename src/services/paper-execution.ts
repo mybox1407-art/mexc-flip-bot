@@ -118,7 +118,7 @@ export class PaperExecutionService {
     const now = Date.now();
     const openedAt = new Date(trade.openedAt).getTime();
     const holdMs = now - openedAt;
-    const holdSec = holdMs / 1000;
+    const holdSec = Math.floor(holdMs / 1000);
 
     const spreadPct =
       trade.direction === "LONG" ? anchor.longSpreadPct : anchor.shortSpreadPct;
@@ -130,10 +130,10 @@ export class PaperExecutionService {
         entryPrice: trade.entryPrice,
         currentPrice: ticker.lastPrice.toFixed(6),
         spreadPct: spreadPct.toFixed(3),
-        holdSec: holdSec.toFixed(0),
+        holdSec: holdSec,
         exitThreshold: config.paperExitSpreadPct,
         stopThreshold: config.paperStopSpreadPct,
-        maxHoldSec: config.paperMaxHoldMs / 1000
+        maxHoldSec: Math.floor(config.paperMaxHoldMs / 1000)
       },
       "Checking open position"
     );
@@ -179,7 +179,7 @@ export class PaperExecutionService {
         netPnlPct: netPnlPct.toFixed(4),
         grossPnlUsd: grossPnlUsd.toFixed(4),
         netPnlUsd: netPnlUsd.toFixed(4),
-        holdSec: holdSec.toFixed(0),
+        holdSec: holdSec,
         closeReason,
         entrySpreadPct: trade.entrySpreadPct,
         exitSpreadPct: spreadPct.toFixed(3)
@@ -212,9 +212,9 @@ export class PaperExecutionService {
         direction: closedTrade.direction,
         entryPrice: closedTrade.entryPrice,
         exitPrice: closedTrade.exitPrice,
-        netPnlPct: closedTrade.netPnlPct,
-        netPnlUsd: closedTrade.netPnlUsd,
-        holdSec: (closedTrade.holdMs / 1000).toFixed(0),
+        netPnlPct: closedTrade.netPnlPct.toFixed(4),
+        netPnlUsd: closedTrade.netPnlUsd.toFixed(4),
+        holdSec: holdSec,
         closeReason: closedTrade.closeReason
       },
       "PAPER TRADE CLOSED"
