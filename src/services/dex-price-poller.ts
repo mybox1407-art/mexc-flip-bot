@@ -1,78 +1,70 @@
+// src/services/dex-price-poller.ts
 import { logger } from "../logger.js";
-import type { DexScreenerClient, DexPair } from "../mexc/dexscreener.js";
-import type { DexMapper } from "./dex-mapper.js";
-import { config } from "../config.js";
 
-type OnPrice = (mexcSymbol: string, pair: DexPair) => void | Promise<void>;
+start(): void {
+  if (this.timer) {
+    return;
+  }
 
-export class DexPricePoller {
-  private timer?: NodeJS.Timeout;
-  private running = false;
+  logger.info("DexPricePoller started");  // ← Добавь
 
-  constructor(
-    private readonly dexClient: DexScreenerClient,
-    private readonly dexMapper: DexMapper,
-    private readonly onPrice: OnPrice
-  ) {}
-
-  start(): void {
-    if (this.timer) {
-      return;
-    }
-
+  void this.poll();
+  
+  this.timer = setInterval(() => {
     void this.poll();
-    this.timer = setInterval(() => {
-      void this.poll();
-    }, config.dexPollMs);
+  }, config.dexPollMs);
+}
+
+private async poll(): Promise<void> {
+  if (this.running) {
+    return;
   }
 
-  stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
-  }
+  this.running = true;
 
-  private async poll(): Promise<void> {
-    if (this.running) {
-      return;
-    }
+  try {
+    const mappings = this.dexMapper.getActive();
+    
+    logger.info({ count: mappings.length }, "Polling DEX prices");  // ← Добавь
 
-    this.running = true;
-
-    try {
-      const mappings = this.dexMapper.getActive();
-
-      for (const mapping of mappings) {
-        try {
-          if (!mapping.chainId || !mapping.dexPairAddress) {
-            continue;
-          }
-
-          const pair = await this.dexClient.getPairByChainAndAddress(
-            mapping.chainId,
-            mapping.dexPairAddress
-          );
-
-          if (!pair) {
-            continue;
-          }
-
-          await this.onPrice(mapping.mexcSymbol, pair);
-        } catch (error) {
-          logger.warn(
-            {
-              mexcSymbol: mapping.mexcSymbol,
-              chainId: mapping.chainId,
-              dexPairAddress: mapping.dexPairAddress,
-              err: error,
-            },
-            "Failed to poll DEX price for pair"
-          );
+    for (const mapping of mappings) {
+      try {
+        if (!mapping.chainId || !mapping.dexPairAddress) {
+          continue;
         }
+
+        const pair = await this.dexClient.getPairByChainAndAddress(
+          mapping.chainId,
+          mapping.dexPairAddress
+        );
+
+        if (!pair) {
+          continue;
+        }
+
+        logger.debug(  // ← Добавь
+          {
+            symbol: mapping.mexcSymbol,
+            price: pair.priceUsd,
+            liquidity: pair.liquidityUsd
+          },
+          "DEX price updated"
+        );
+
+        await this.onPrice(mapping.mexcSymbol, pair);
+      } catch (error) {
+        logger.warn(
+          {
+            mexcSymbol: mapping.mexcSymbol,
+            chainId: mapping.chainId,
+            dexPairAddress: mapping.dexPairAddress,
+            err: error,
+          },
+          "Failed to poll DEX price for pair"
+        );
       }
-    } finally {
-      this.running = false;
     }
+  } finally {
+    this.running = false;
   }
 }
