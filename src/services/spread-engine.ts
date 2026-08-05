@@ -3,6 +3,7 @@ import { config } from "../config.js";
 import { logger } from "../logger.js";
 import type { FlipSignal, MexcTicker } from "../types.js";
 import type { DexPair } from "../mexc/dexscreener.js";
+import type { DexMapper } from "./dex-mapper.js";
 
 export interface AnchorStatus {
   symbol: string;
@@ -55,16 +56,28 @@ function round(value: number, digits = 3): number {
 export class SpreadEngine {
   private readonly dexSnapshots = new Map<string, DexSnapshot>();
   private readonly states = new Map<string, SymbolState>();
+  private readonly dexMapper: DexMapper;
+
+  constructor(dexMapper: DexMapper) {
+    this.dexMapper = dexMapper;
+  }
 
   updateDexPrice(symbol: string, pair: DexPair): void {
     const now = Date.now();
     const normalized = normalizeSymbol(symbol);
 
+    // Получаем маппинг для этого символа
+    const mapping = this.dexMapper.get(symbol);
+
+    // Если есть явный ключ для DEX — используем его
+    const snapshotKey = mapping?.normalizedDexKey ?? normalized;
+
     logger.info(
       {
         symbol,
         normalized,
-        pairMexcSymbol: (pair as any).mexcSymbol,
+        snapshotKey,
+        mappingDexKey: mapping?.normalizedDexKey,
         dexId: pair.dexId,
         chainId: pair.chainId,
         snapshotKeysBefore: Array.from(this.dexSnapshots.keys())
@@ -72,12 +85,12 @@ export class SpreadEngine {
       "updateDexPrice called"
     );
 
-    this.dexSnapshots.set(normalized, {
+    this.dexSnapshots.set(snapshotKey, {
       ...pair,
       updatedAt: now
     });
 
-    const state = this.getState(normalized);
+    const state = this.getState(snapshotKey);
     state.dexHistory.push({ price: pair.priceUsd, ts: now });
 
     const cutoff = now - 30_000;
@@ -87,6 +100,7 @@ export class SpreadEngine {
       {
         symbol,
         normalized,
+        snapshotKey,
         price: pair.priceUsd.toFixed(6),
         liquidity: pair.liquidityUsd.toFixed(0),
         snapshotKeysAfter: Array.from(this.dexSnapshots.keys())
@@ -97,15 +111,24 @@ export class SpreadEngine {
 
   getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
     const normalized = normalizeSymbol(ticker.symbol);
-    const anchor = this.dexSnapshots.get(normalized);
+
+    // Получаем маппинг для этого символа
+    const mapping = this.dexMapper.get(ticker.symbol);
+
+    // Если есть явный ключ для DEX — используем его
+    const snapshotKey = mapping?.normalizedDexKey ?? normalized;
+
+    const anchor = this.dexSnapshots.get(snapshotKey);
 
     logger.info(
       {
         tickerSymbol: ticker.symbol,
         normalized,
+        snapshotKey,
+        mappingDexKey: mapping?.normalizedDexKey,
         hasAnchor: !!anchor,
         snapshotKeys: Array.from(this.dexSnapshots.keys()),
-        lookingFor: normalized
+        lookingFor: snapshotKey
       },
       "getAnchorStatus called"
     );
@@ -131,7 +154,7 @@ export class SpreadEngine {
     const mexcMid = (mexcBid + mexcAsk) / 2;
     const mexcBookSpreadPct = ((mexcAsk - mexcBid) / mexcMid) * 100;
 
-    const state = this.getState(normalized);
+    const state = this.getState(snapshotKey);
     const dexDriftPct = this.calculateDexDriftPct(state.dexHistory);
 
     const longSpreadPct = ((anchor.priceUsd - mexcAsk) / mexcAsk) * 100;
@@ -140,7 +163,7 @@ export class SpreadEngine {
     logger.info(
       {
         symbol: ticker.symbol,
-        normalized,
+        snapshotKey,
         dexPrice: anchor.priceUsd.toFixed(6),
         mexcBid: mexcBid.toFixed(6),
         mexcAsk: mexcAsk.toFixed(6),
