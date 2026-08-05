@@ -151,7 +151,7 @@ async function bootstrap(): Promise<void> {
     }
 
     // Вычисляем normalizedDexKey из пары
-    const normalizedDexKey = normalizeSymbol(`${pair.baseToken}_${pair.quoteSymbol}`);
+    const normalizedDexKey = normalizeSymbol(`${pair.baseSymbol}_${pair.quoteSymbol}`);
 
     dexMapper.upsert({
       mexcSymbol: contract.symbol,
