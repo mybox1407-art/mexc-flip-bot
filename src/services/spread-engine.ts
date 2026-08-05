@@ -125,11 +125,10 @@ export class SpreadEngine {
     const status = this.getAnchorStatus(ticker);
     
     if (!status) {
-      logger.debug({ symbol: ticker.symbol }, "No DEX anchor for symbol");
+      logger.warn({ symbol: ticker.symbol }, "❌ No DEX anchor for symbol");
       return null;
     }
 
-    // Логируем все спреды
     logger.info(
       {
         symbol: ticker.symbol,
@@ -143,84 +142,101 @@ export class SpreadEngine {
         dexLiquidityUsd: status.dexLiquidityUsd.toFixed(0),
         mexcTurnover24h: status.mexcTurnover24h.toFixed(0)
       },
-      "Spread calculated"
+      "📊 Spread calculated"
     );
 
-    // Проверки
+    // ✅ Проверка 1: anchor age
     if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           anchorAgeMs: status.anchorAgeMs,
           maxAge: config.maxDexAnchorAgeMs
         },
-        "Signal skipped: DEX anchor too old"
+        "❌ DEX anchor too old"
       );
       return null;
     }
 
+    // ✅ Проверка 2: DEX liquidity
     if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           liquidity: status.dexLiquidityUsd,
           minLiquidity: config.dexMinLiquidityUsd
         },
-        "Signal skipped: DEX liquidity too low"
+        "❌ DEX liquidity too low"
       );
       return null;
     }
 
+    // ✅ Проверка 3: DEX volume M5
     if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           volumeM5: status.dexVolumeM5,
           minVolumeM5: config.dexMinVolumeM5Usd
         },
-        "Signal skipped: DEX volume too low"
+        "❌ DEX volume too low"
       );
       return null;
     }
 
+    // ✅ Проверка 4: MEXC turnover 24h
     if (status.mexcTurnover24h < config.minMexcTurnover24h) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           turnover24h: status.mexcTurnover24h,
           minTurnover24h: config.minMexcTurnover24h
         },
-        "Signal skipped: MEXC turnover too low"
+        "❌ MEXC turnover too low"
       );
       return null;
     }
 
+    // ✅ Проверка 5: MEXC book spread
     if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           bookSpreadPct: status.mexcBookSpreadPct.toFixed(3),
           maxBookSpreadPct: config.maxMexcBookSpreadPct
         },
-        "Signal skipped: MEXC book spread too wide"
+        "❌ MEXC book spread too wide"
       );
       return null;
     }
 
+    // ✅ Проверка 6: DEX drift
     if (status.dexDriftPct > config.maxDexDriftPct) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           driftPct: status.dexDriftPct.toFixed(3),
           maxDriftPct: config.maxDexDriftPct
         },
-        "Signal skipped: DEX drift too high"
+        "❌ DEX drift too high"
       );
       return null;
     }
 
     const now = Date.now();
     const state = this.getState(ticker.symbol);
+
+    // ✅ Проверка 7: cooldown
+    if (now < state.cooldownUntil) {
+      logger.warn(
+        {
+          symbol: ticker.symbol,
+          cooldownRemaining: (state.cooldownUntil - now) / 1000
+        },
+        "❌ In cooldown"
+      );
+      return null;
+    }
 
     let direction: "LONG" | "SHORT" | null = null;
     let spreadPct = 0;
@@ -245,24 +261,14 @@ export class SpreadEngine {
           shortSpread: status.shortSpreadPct.toFixed(3),
           minSpread: config.minSpreadPct
         },
-        "Signal skipped: both spreads too small"
+        "❌ Both spreads too small"
       );
       state.lastDirection = undefined;
       state.confirmCount = 0;
       return null;
     }
 
-    if (now < state.cooldownUntil) {
-      logger.debug(
-        {
-          symbol: ticker.symbol,
-          cooldownRemaining: (state.cooldownUntil - now) / 1000
-        },
-        "Signal skipped: in cooldown"
-      );
-      return null;
-    }
-
+    // ✅ Проверка 8: confirm ticks
     if (state.lastDirection === direction) {
       state.confirmCount += 1;
     } else {
@@ -271,22 +277,24 @@ export class SpreadEngine {
     }
 
     if (state.confirmCount < config.signalConfirmTicks) {
-      logger.debug(
+      logger.info(
         {
           symbol: ticker.symbol,
+          direction,
           confirmCount: state.confirmCount,
           requiredTicks: config.signalConfirmTicks
         },
-        "Signal skipped: not enough confirm ticks"
+        "⏳ Waiting for confirm ticks"
       );
       return null;
     }
 
+    // ✅ Проверка 9: net edge
     const totalCostsPct = config.assumedFeesPct + config.assumedSlippagePct;
     const netEdgePct = spreadPct - totalCostsPct;
 
     if (netEdgePct < config.minNetEdgePct) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           spreadPct: spreadPct.toFixed(3),
@@ -294,18 +302,19 @@ export class SpreadEngine {
           netEdgePct: netEdgePct.toFixed(3),
           minNetEdge: config.minNetEdgePct
         },
-        "Signal skipped: net edge too low"
+        "❌ Net edge too low"
       );
       return null;
     }
 
+    // ✅ Проверка 10: signal cooldown
     if (now - state.lastSignalAt < config.signalCooldownMs) {
-      logger.debug(
+      logger.warn(
         {
           symbol: ticker.symbol,
           cooldownRemaining: (config.signalCooldownMs - (now - state.lastSignalAt)) / 1000
         },
-        "Signal skipped: signal cooldown"
+        "❌ Signal cooldown"
       );
       return null;
     }
@@ -325,7 +334,7 @@ export class SpreadEngine {
         mexcAsk: status.mexcAsk.toFixed(6),
         reason
       },
-      "SIGNAL GENERATED"
+      "🚀 SIGNAL GENERATED"
     );
 
     return {
