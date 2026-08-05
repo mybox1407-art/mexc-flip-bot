@@ -71,7 +71,8 @@ export class SpreadEngine {
     const cutoff = now - 30_000;
     state.dexHistory = state.dexHistory.filter((point) => point.ts >= cutoff);
 
-    logger.debug(
+    // поднимаем уровень до info, чтобы увидеть, что якорь реально обновляется
+    logger.info(
       {
         symbol,
         normalized,
@@ -85,7 +86,9 @@ export class SpreadEngine {
   getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
     const normalized = normalizeSymbol(ticker.symbol);
     const anchor = this.dexSnapshots.get(normalized);
-    if (!anchor) return null;
+    if (!anchor) {
+      return null;
+    }
 
     const now = Date.now();
     const anchorAgeMs = now - anchor.updatedAt;
@@ -109,6 +112,19 @@ export class SpreadEngine {
 
     const longSpreadPct = ((anchor.priceUsd - mexcAsk) / mexcAsk) * 100;
     const shortSpreadPct = ((mexcBid - anchor.priceUsd) / mexcBid) * 100;
+
+    // логируем факт, что anchor найден
+    logger.info(
+      {
+        symbol: ticker.symbol,
+        normalized,
+        dexPrice: anchor.priceUsd.toFixed(6),
+        mexcBid: mexcBid.toFixed(6),
+        mexcAsk: mexcAsk.toFixed(6),
+        anchorAgeMs
+      },
+      "Anchor status resolved"
+    );
 
     return {
       symbol: ticker.symbol,
