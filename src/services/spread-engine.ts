@@ -60,6 +60,18 @@ export class SpreadEngine {
     const now = Date.now();
     const normalized = normalizeSymbol(symbol);
 
+    logger.info(
+      {
+        symbol,
+        normalized,
+        pairMexcSymbol: (pair as any).mexcSymbol,
+        dexId: pair.dexId,
+        chainId: pair.chainId,
+        snapshotKeysBefore: Array.from(this.dexSnapshots.keys())
+      },
+      "updateDexPrice called"
+    );
+
     this.dexSnapshots.set(normalized, {
       ...pair,
       updatedAt: now
@@ -71,13 +83,13 @@ export class SpreadEngine {
     const cutoff = now - 30_000;
     state.dexHistory = state.dexHistory.filter((point) => point.ts >= cutoff);
 
-    // поднимаем уровень до info, чтобы увидеть, что якорь реально обновляется
     logger.info(
       {
         symbol,
         normalized,
         price: pair.priceUsd.toFixed(6),
-        liquidity: pair.liquidityUsd.toFixed(0)
+        liquidity: pair.liquidityUsd.toFixed(0),
+        snapshotKeysAfter: Array.from(this.dexSnapshots.keys())
       },
       "DEX price updated"
     );
@@ -86,6 +98,18 @@ export class SpreadEngine {
   getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
     const normalized = normalizeSymbol(ticker.symbol);
     const anchor = this.dexSnapshots.get(normalized);
+
+    logger.info(
+      {
+        tickerSymbol: ticker.symbol,
+        normalized,
+        hasAnchor: !!anchor,
+        snapshotKeys: Array.from(this.dexSnapshots.keys()),
+        lookingFor: normalized
+      },
+      "getAnchorStatus called"
+    );
+
     if (!anchor) {
       return null;
     }
@@ -113,7 +137,6 @@ export class SpreadEngine {
     const longSpreadPct = ((anchor.priceUsd - mexcAsk) / mexcAsk) * 100;
     const shortSpreadPct = ((mexcBid - anchor.priceUsd) / mexcBid) * 100;
 
-    // логируем факт, что anchor найден
     logger.info(
       {
         symbol: ticker.symbol,
@@ -150,6 +173,14 @@ export class SpreadEngine {
   }
 
   evaluate(ticker: MexcTicker): FlipSignal | null {
+    logger.info(
+      {
+        symbol: ticker.symbol,
+        normalized: normalizeSymbol(ticker.symbol)
+      },
+      "evaluate() called"
+    );
+
     const status = this.getAnchorStatus(ticker);
     
     if (!status) {
@@ -179,7 +210,6 @@ export class SpreadEngine {
       "📊 Spread calculated"
     );
 
-    // ✅ Проверка 1: anchor age
     if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
       logger.warn(
         {
@@ -192,7 +222,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 2: DEX liquidity
     if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) {
       logger.warn(
         {
@@ -205,7 +234,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 3: DEX volume M5
     if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) {
       logger.warn(
         {
@@ -218,7 +246,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 4: MEXC turnover 24h
     if (status.mexcTurnover24h < config.minMexcTurnover24h) {
       logger.warn(
         {
@@ -231,7 +258,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 5: MEXC book spread
     if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) {
       logger.warn(
         {
@@ -244,7 +270,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 6: DEX drift
     if (status.dexDriftPct > config.maxDexDriftPct) {
       logger.warn(
         {
@@ -260,7 +285,6 @@ export class SpreadEngine {
     const now = Date.now();
     const state = this.getState(ticker.symbol);
 
-    // ✅ Проверка 7: cooldown
     if (now < state.cooldownUntil) {
       logger.warn(
         {
@@ -302,7 +326,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 8: confirm ticks
     if (state.lastDirection === direction) {
       state.confirmCount += 1;
     } else {
@@ -323,7 +346,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 9: net edge
     const totalCostsPct = config.assumedFeesPct + config.assumedSlippagePct;
     const netEdgePct = spreadPct - totalCostsPct;
 
@@ -341,7 +363,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ Проверка 10: signal cooldown
     if (now - state.lastSignalAt < config.signalCooldownMs) {
       logger.warn(
         {
