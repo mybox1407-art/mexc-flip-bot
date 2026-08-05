@@ -63,11 +63,8 @@ function normalizeSymbol(value: string): string {
 function isBlockedBaseSymbol(symbol: string): boolean {
   const upper = symbol.toUpperCase();
 
-  if (/^\d{3,}/.test(upper)) {
-    return true;
-  }
-
-  const blockedFragments = [
+  // Точное совпадение, а не фрагменты
+  const blockedExact = [
     "USD1",
     "STOCK",
     "NASDAQ",
@@ -80,10 +77,11 @@ function isBlockedBaseSymbol(symbol: string): boolean {
     "MSFT",
     "SBUX",
     "ARM",
-    "HD"
+    "HD",
+    "COPPER"
   ];
 
-  return blockedFragments.some((fragment) => upper.includes(fragment));
+  return blockedExact.includes(upper);
 }
 
 export class DexScreenerClient {
@@ -102,7 +100,7 @@ export class DexScreenerClient {
     this.lastRequestAt = Date.now();
   }
 
-  private async fetchJsonWithRetry(url: string): Promise<DexSearchResponse> {
+  private async fetchJsonWithRetry(url: string, query?: string): Promise<DexSearchResponse | null> {
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       await this.throttle();
 
@@ -120,6 +118,14 @@ export class DexScreenerClient {
         continue;
       }
 
+      if (response.status === 400) {
+        logger.warn(
+          { url, query },
+          "DexScreener returned 400, skipping"
+        );
+        return null;
+      }
+
       if (!response.ok) {
         throw new Error(`DexScreener search failed: ${response.status}`);
       }
@@ -130,7 +136,7 @@ export class DexScreenerClient {
     throw new Error("DexScreener search failed: 429");
   }
 
-  async findBestPairAcrossChains(query: string): Promise<DexPair | null> {
+  private async findPairByQuery(query: string): Promise<DexPair | null> {
     const normalizedQuery = normalizeSymbol(query);
 
     if (!normalizedQuery || isBlockedBaseSymbol(normalizedQuery)) {
@@ -138,9 +144,13 @@ export class DexScreenerClient {
     }
 
     const url = `${this.baseUrl}/search?q=${encodeURIComponent(query)}`;
-    const payload = await this.fetchJsonWithRetry(url);
+    const payload = await this.fetchJsonWithRetry(url, query);
 
-    const pairs = payload.pairs ?? [];
+    if (!payload || !payload.pairs) {
+      return null;
+    }
+
+    const pairs = payload.pairs;
     const now = Date.now();
     const maxPairAgeMs = config.dexMaxPairAgeHours * 3_600_000;
 
@@ -250,13 +260,60 @@ export class DexScreenerClient {
     return best;
   }
 
+  async findBestPairAcrossChains(query: string): Promise<DexPair | null> {
+    const normalizedQuery = normalizeSymbol(query);
+
+    if (!normalizedQuery || isBlockedBaseSymbol(normalizedQuery)) {
+      return null;
+    }
+
+    // 1. Пробуем по основному query
+    let pair = await this.findPairByQuery(query);
+    if (pair) return pair;
+
+    // 2. Fallback по алиасам
+    const aliases = this.getQueryAliases(query);
+    for (const alias of aliases) {
+      pair = await this.findPairByQuery(alias);
+      if (pair) return pair;
+    }
+
+    return null;
+  }
+
+  private getQueryAliases(query: string): string[] {
+    const base = query.toUpperCase();
+    const aliases: string[] = [];
+
+    // Токены с префиксами
+    if (base.startsWith("1000")) {
+      aliases.push(base.slice(4)); // 1000BONK → BONK
+    }
+
+    // Обёртки
+    if (base === "SOL") aliases.push("SOLANA", "WRAPPED-SOLANA");
+    if (base === "BTC") aliases.push("BITCOIN", "WBTC");
+    if (base === "ETH") aliases.push("ETHEREUM", "WETH");
+    if (base === "BNB") aliases.push("WBNB");
+    if (base === "MATIC") aliases.push("WMATIC");
+    if (base === "AVAX") aliases.push("WAVAX");
+    if (base === "FTM") aliases.push("WFTM");
+
+    // Мемы
+    if (base === "PEPE") aliases.push("PEPESOLANA");
+    if (base === "WIF") aliases.push("WIFSOLANA");
+    if (base === "BONK") aliases.push("BONKSOLANA");
+
+    return aliases;
+  }
+
   async getPairByChainAndAddress(
     chainId: string,
     pairAddress: string
   ): Promise<DexPair | null> {
     const url = `${this.baseUrl}/pairs/${encodeURIComponent(chainId)}/${encodeURIComponent(pairAddress)}`;
     const payload = await this.fetchJsonWithRetry(url);
-    const pair = payload.pairs?.[0];
+    const pair = payload?.pairs?.[0];
 
     if (!pair) {
       return null;
