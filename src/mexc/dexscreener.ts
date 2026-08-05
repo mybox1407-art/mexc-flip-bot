@@ -147,6 +147,7 @@ export class DexScreenerClient {
     const payload = await this.fetchJsonWithRetry(url, query);
 
     if (!payload || !payload.pairs) {
+      logger.debug({ query, url }, "No pairs returned from search");
       return null;
     }
 
@@ -213,11 +214,11 @@ export class DexScreenerClient {
         baseSymbol: pair.baseToken?.symbol ?? "",
         quoteSymbol: pair.quoteToken?.symbol ?? "",
         liquidityUsd: Number(pair.liquidity?.usd ?? 0),
-        volumeM5: Number(pair.volume?.m5 ?? 0),
-        buysM5: Number(pair.txns?.m5?.buys ?? 0),
-        sellsM5: Number(pair.txns?.m5?.sells ?? 0),
-        priceUsd: Number(pair.priceUsd ?? 0),
-        pairCreatedAt: Number(pair.pairCreatedAt ?? 0)
+        volumeM5 = Number(pair.volume?.m5 ?? 0),
+        buysM5 = Number(pair.txns?.m5?.buys ?? 0),
+        sellsM5 = Number(pair.txns?.m5?.sells ?? 0),
+        priceUsd = Number(pair.priceUsd ?? 0),
+        pairCreatedAt = Number(pair.pairCreatedAt ?? 0)
       }))
       .sort((a, b) => {
         const quoteRankA = config.dexQuotePriority.indexOf(a.quoteSymbol.toLowerCase());
@@ -312,18 +313,37 @@ export class DexScreenerClient {
     pairAddress: string
   ): Promise<DexPair | null> {
     const url = `${this.baseUrl}/pairs/${encodeURIComponent(chainId)}/${encodeURIComponent(pairAddress)}`;
+    
+    logger.info({ chainId, pairAddress, url }, "getPairByChainAndAddress called");
+    
     const payload = await this.fetchJsonWithRetry(url);
+    
+    logger.debug({ chainId, pairAddress, payload }, "getPairByChainAndAddress response");
+    
     const pair = payload?.pairs?.[0];
 
     if (!pair) {
+      logger.warn({ chainId, pairAddress, url }, "No pair returned from DexScreener");
       return null;
     }
 
     const priceUsd = Number(pair.priceUsd ?? 0);
 
     if (!(priceUsd > 0)) {
+      logger.warn({ chainId, pairAddress, priceUsd }, "Invalid priceUsd");
       return null;
     }
+
+    logger.debug(
+      {
+        chainId,
+        pairAddress,
+        symbol: pair.baseToken?.symbol,
+        priceUsd,
+        liquidity: Number(pair.liquidity?.usd ?? 0)
+      },
+      "DEX pair fetched successfully"
+    );
 
     return {
       chainId: (pair.chainId ?? "").toLowerCase(),
