@@ -137,12 +137,12 @@ export class SpreadEngine {
     const status = this.getAnchorStatus(ticker);
     
     if (!status) {
-      logger.warn(
+      logger.debug(
         {
           symbol: ticker.symbol,
           normalized: normalizeSymbol(ticker.symbol)
         },
-        "❌ No DEX anchor for symbol"
+        "No DEX anchor for symbol"
       );
       return null;
     }
