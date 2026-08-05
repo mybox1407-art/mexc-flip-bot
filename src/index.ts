@@ -212,6 +212,16 @@ async function bootstrap(): Promise<void> {
 
   const mexcWsClient = new MexcFuturesWsClient({
     onTicker: async (ticker: MexcTicker) => {
+      logger.info(
+        {
+          tickerSymbol: ticker.symbol,
+          lastPrice: ticker.lastPrice,
+          maxBidPrice: ticker.maxBidPrice,
+          minAskPrice: ticker.minAskPrice
+        },
+        "onTicker called"
+      );
+
       const signal = spreadEngine.evaluate(ticker);
 
       if (signal) {
