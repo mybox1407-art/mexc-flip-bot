@@ -1,99 +1,61 @@
-import { logger } from "../logger.js";
-import type { DexScreenerClient, DexPair } from "../mexc/dexscreener.js";
-import type { DexMapper } from "./dex-mapper.js";
-import { config } from "../config.js";
-
-type OnPrice = (mexcSymbol: string, pair: DexPair) => void | Promise<void>;
-
-export class DexPricePoller {
-  private timer?: NodeJS.Timeout;
-  private running = false;
-
-  constructor(
-    private readonly dexClient: DexScreenerClient,
-    private readonly dexMapper: DexMapper,
-    private readonly onPrice: OnPrice
-  ) {}
-
-  start(): void {
-    if (this.timer) {
-      return;
-    }
-
-    logger.info("DexPricePoller started");
-
-    void this.poll();
-    this.timer = setInterval(() => {
-      void this.poll();
-    }, config.dexPollMs);
+private async poll(): Promise<void> {
+  if (this.running) {
+    return;
   }
 
-  stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
-  }
+  this.running = true;
 
-  private async poll(): Promise<void> {
-    if (this.running) {
-      return;
-    }
+  try {
+    const mappings = this.dexMapper.getActive();
+    
+    logger.info({ count: mappings.length }, "Polling DEX prices");
 
-    this.running = true;
-
-    try {
-      const mappings = this.dexMapper.getActive();
-      
-      logger.info({ count: mappings.length }, "Polling DEX prices");
-
-      for (const mapping of mappings) {
-        try {
-          if (!mapping.chainId || !mapping.dexPairAddress) {
-            logger.warn(
-              { symbol: mapping.mexcSymbol },
-              "Missing chainId or dexPairAddress"
-            );
-            continue;
-          }
-
-          const pair = await this.dexClient.getPairByChainAndAddress(
-            mapping.chainId,
-            mapping.dexPairAddress
-          );
-
-          if (!pair) {
-            logger.warn(
-              { symbol: mapping.mexcSymbol },
-              "No pair returned from DexScreener"
-            );
-            continue;
-          }
-
-          logger.debug(
-            {
-              symbol: mapping.mexcSymbol,
-              price: pair.priceUsd,
-              liquidity: pair.liquidityUsd
-            },
-            "DEX price updated"
-          );
-
-          await this.onPrice(mapping.mexcSymbol, pair);
-        } catch (error) {
+    for (const mapping of mappings) {
+      try {
+        if (!mapping.chainId || !mapping.dexPairAddress) {
           logger.warn(
-            {
-              mexcSymbol: mapping.mexcSymbol,
-              chainId: mapping.chainId,
-              dexPairAddress: mapping.dexPairAddress,
-              err: error,
-            },
-            "Failed to poll DEX price for pair"
+            { symbol: mapping.mexcSymbol },
+            "Missing chainId or dexPairAddress"
           );
+          continue;
         }
+
+        const pair = await this.dexClient.getPairByChainAndAddress(
+          mapping.chainId,
+          mapping.dexPairAddress
+        );
+
+        if (!pair) {
+          logger.warn(
+            { symbol: mapping.mexcSymbol },
+            "No pair returned from DexScreener"
+          );
+          continue;
+        }
+
+        logger.debug(
+          {
+            symbol: mapping.mexcSymbol,
+            price: pair.priceUsd,
+            liquidity: pair.liquidityUsd
+          },
+          "DEX price updated"
+        );
+
+        await this.onPrice(mapping.mexcSymbol, pair);
+      } catch (error) {
+        logger.warn(
+          {
+            mexcSymbol: mapping.mexcSymbol,
+            chainId: mapping.chainId,
+            dexPairAddress: mapping.dexPairAddress,
+            err: error,
+          },
+          "Failed to poll DEX price for pair"
+        );
       }
-    } finally {
-      this.running = false;
     }
+  } finally {
+    this.running = false;
   }
 }
