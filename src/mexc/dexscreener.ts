@@ -214,11 +214,11 @@ export class DexScreenerClient {
         baseSymbol: pair.baseToken?.symbol ?? "",
         quoteSymbol: pair.quoteToken?.symbol ?? "",
         liquidityUsd: Number(pair.liquidity?.usd ?? 0),
-        volumeM5 = Number(pair.volume?.m5 ?? 0),
-        buysM5 = Number(pair.txns?.m5?.buys ?? 0),
-        sellsM5 = Number(pair.txns?.m5?.sells ?? 0),
-        priceUsd = Number(pair.priceUsd ?? 0),
-        pairCreatedAt = Number(pair.pairCreatedAt ?? 0)
+        volumeM5: Number(pair.volume?.m5 ?? 0),
+        buysM5: Number(pair.txns?.m5?.buys ?? 0),
+        sellsM5: Number(pair.txns?.m5?.sells ?? 0),
+        priceUsd: Number(pair.priceUsd ?? 0),
+        pairCreatedAt: Number(pair.pairCreatedAt ?? 0)
       }))
       .sort((a, b) => {
         const quoteRankA = config.dexQuotePriority.indexOf(a.quoteSymbol.toLowerCase());
