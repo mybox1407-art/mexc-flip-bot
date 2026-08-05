@@ -212,8 +212,8 @@ export class PaperExecutionService {
         direction: closedTrade.direction,
         entryPrice: closedTrade.entryPrice,
         exitPrice: closedTrade.exitPrice,
-        netPnlPct: closedTrade.netPnlPct.toFixed(4),
-        netPnlUsd: closedTrade.netPnlUsd.toFixed(4),
+        netPnlPct: closedTrade.netPnlPct!.toFixed(4),  // ← Добавь !
+        netPnlUsd: closedTrade.netPnlUsd!.toFixed(4),  // ← Добавь !
         holdSec: holdSec,
         closeReason: closedTrade.closeReason
       },
