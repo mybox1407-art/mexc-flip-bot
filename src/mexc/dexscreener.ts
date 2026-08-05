@@ -140,10 +140,13 @@ export class DexScreenerClient {
     const normalizedQuery = normalizeSymbol(query);
 
     if (!normalizedQuery || isBlockedBaseSymbol(normalizedQuery)) {
+      logger.debug({ query, normalizedQuery }, "Query blocked or empty");
       return null;
     }
 
     const url = `${this.baseUrl}/search?q=${encodeURIComponent(query)}`;
+    logger.debug({ query, url }, "Searching DEX pair");
+    
     const payload = await this.fetchJsonWithRetry(url, query);
 
     if (!payload || !payload.pairs) {
@@ -252,8 +255,9 @@ export class DexScreenerClient {
         chainId: best.chainId,
         dexId: best.dexId,
         quoteSymbol: best.quoteSymbol,
-        liquidityUsd: best.liquidityUsd,
-        volumeM5: best.volumeM5
+        liquidityUsd: best.liquidityUsd.toFixed(0),
+        volumeM5: best.volumeM5.toFixed(0),
+        priceUsd: best.priceUsd.toFixed(6)
       },
       "DexScreener best pair selected"
     );
@@ -265,20 +269,31 @@ export class DexScreenerClient {
     const normalizedQuery = normalizeSymbol(query);
 
     if (!normalizedQuery || isBlockedBaseSymbol(normalizedQuery)) {
+      logger.debug({ query, normalizedQuery }, "Query blocked or empty");
       return null;
     }
 
+    logger.info({ query, normalizedQuery }, "findBestPairAcrossChains called");
+
     // 1. Пробуем по основному query
     let pair = await this.findPairByQuery(query);
-    if (pair) return pair;
+    if (pair) {
+      logger.info({ query, success: true }, "Found pair on first attempt");
+      return pair;
+    }
 
     // 2. Fallback по алиасам
     const aliases = this.getQueryAliases(query);
     for (const alias of aliases) {
+      logger.debug({ query, alias }, "Trying alias");
       pair = await this.findPairByQuery(alias);
-      if (pair) return pair;
+      if (pair) {
+        logger.info({ query, alias, success: true }, "Found pair via alias");
+        return pair;
+      }
     }
 
+    logger.info({ query, aliases: aliases.length }, "No pair found");
     return null;
   }
 
@@ -314,16 +329,14 @@ export class DexScreenerClient {
   ): Promise<DexPair | null> {
     const url = `${this.baseUrl}/pairs/${encodeURIComponent(chainId)}/${encodeURIComponent(pairAddress)}`;
     
-    logger.info({ chainId, pairAddress, url }, "getPairByChainAndAddress called");
+    logger.debug({ chainId, pairAddress }, "getPairByChainAndAddress called");
     
     const payload = await this.fetchJsonWithRetry(url);
-    
-    logger.debug({ chainId, pairAddress, payload }, "getPairByChainAndAddress response");
     
     const pair = payload?.pairs?.[0];
 
     if (!pair) {
-      logger.warn({ chainId, pairAddress, url }, "No pair returned from DexScreener");
+      logger.warn({ chainId, pairAddress }, "No pair returned from DexScreener");
       return null;
     }
 
@@ -339,8 +352,8 @@ export class DexScreenerClient {
         chainId,
         pairAddress,
         symbol: pair.baseToken?.symbol,
-        priceUsd,
-        liquidity: Number(pair.liquidity?.usd ?? 0)
+        priceUsd: priceUsd.toFixed(6),
+        liquidity: Number(pair.liquidity?.usd ?? 0).toFixed(0)
       },
       "DEX pair fetched successfully"
     );
