@@ -51,7 +51,7 @@ async function bootstrap(): Promise<void> {
   const mexcRestClient = new MexcFuturesRestClient();
   const dexScreenerClient = new DexScreenerClient();
   const dexMapper = new DexMapper();
-  const spreadEngine = new SpreadEngine();
+  const spreadEngine = new SpreadEngine(dexMapper);
   const paperExecution = new PaperExecutionService();
   const telegramNotifier = new TelegramNotifier(
     config.telegramBotToken,
@@ -150,6 +150,9 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
+    // Вычисляем normalizedDexKey из пары
+    const normalizedDexKey = normalizeSymbol(`${pair.baseToken}_${pair.quoteSymbol}`);
+
     dexMapper.upsert({
       mexcSymbol: contract.symbol,
       chainId: pair.chainId,
@@ -162,7 +165,8 @@ async function bootstrap(): Promise<void> {
       volumeM5: pair.volumeM5,
       priceUsd: pair.priceUsd,
       status: "active",
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      normalizedDexKey
     });
 
     await dexMapper.save();
@@ -176,7 +180,8 @@ async function bootstrap(): Promise<void> {
         quoteSymbol: pair.quoteSymbol,
         liquidityUsd: pair.liquidityUsd,
         volumeM5: pair.volumeM5,
-        priceUsd: pair.priceUsd
+        priceUsd: pair.priceUsd,
+        normalizedDexKey
       },
       "✅ New DEX mapping created"
     );
