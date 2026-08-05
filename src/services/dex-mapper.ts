@@ -17,6 +17,7 @@ export interface TokenMapping {
   pairCreatedAt?: number;
   mappedAt: string;
   status: "active" | "not_found" | "blacklisted";
+  normalizedDexKey?: string;
 }
 
 export interface UpsertData {
@@ -32,6 +33,7 @@ export interface UpsertData {
   priceUsd: number | null;
   status: "active" | "not_found" | "blacklisted";
   updatedAt: string;
+  normalizedDexKey?: string;
 }
 
 // ========== Нормализация ==========
@@ -105,6 +107,7 @@ export class DexMapper {
       pairCreatedAt: existing?.pairCreatedAt,
       mappedAt: existing?.mappedAt ?? data.updatedAt,
       status: data.status,
+      normalizedDexKey: data.normalizedDexKey ?? existing?.normalizedDexKey,
     });
   }
 
@@ -127,6 +130,7 @@ export class DexMapper {
       pairCreatedAt: pair.pairCreatedAt,
       mappedAt: new Date().toISOString(),
       status: "active",
+      normalizedDexKey: normalizeSymbol(`${baseCoin}_${pair.quoteSymbol}`),
     };
 
     this.mappings.set(normalized, mapping);
@@ -149,6 +153,7 @@ export class DexMapper {
       pairCreatedAt: undefined,
       mappedAt: new Date().toISOString(),
       status: "not_found",
+      normalizedDexKey: normalizeSymbol(`${baseCoin}_UNKNOWN`),
     });
 
     await this.save();
