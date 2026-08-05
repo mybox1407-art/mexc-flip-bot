@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
+import { logger } from "../logger.js";
 import type { FlipSignal, MexcTicker } from "../types.js";
 import type { DexPair } from "../mexc/dexscreener.js";
 
@@ -59,6 +60,15 @@ export class SpreadEngine {
 
     const cutoff = now - 30_000;
     state.dexHistory = state.dexHistory.filter((point) => point.ts >= cutoff);
+
+    logger.debug(
+      {
+        symbol,
+        price: pair.priceUsd.toFixed(6),
+        liquidity: pair.liquidityUsd.toFixed(0)
+      },
+      "DEX price updated"
+    );
   }
 
   getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
@@ -113,14 +123,101 @@ export class SpreadEngine {
 
   evaluate(ticker: MexcTicker): FlipSignal | null {
     const status = this.getAnchorStatus(ticker);
-    if (!status) return null;
+    
+    if (!status) {
+      logger.debug({ symbol: ticker.symbol }, "No DEX anchor for symbol");
+      return null;
+    }
 
-    if (status.anchorAgeMs > config.maxDexAnchorAgeMs) return null;
-    if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) return null;
-    if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) return null;
-    if (status.mexcTurnover24h < config.minMexcTurnover24h) return null;
-    if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) return null;
-    if (status.dexDriftPct > config.maxDexDriftPct) return null;
+    // Логируем все спреды
+    logger.info(
+      {
+        symbol: ticker.symbol,
+        dexPrice: status.dexPrice.toFixed(6),
+        mexcBid: status.mexcBid.toFixed(6),
+        mexcAsk: status.mexcAsk.toFixed(6),
+        mexcLast: status.mexcLast.toFixed(6),
+        longSpreadPct: status.longSpreadPct.toFixed(3),
+        shortSpreadPct: status.shortSpreadPct.toFixed(3),
+        anchorAgeMs: status.anchorAgeMs,
+        dexLiquidityUsd: status.dexLiquidityUsd.toFixed(0),
+        mexcTurnover24h: status.mexcTurnover24h.toFixed(0)
+      },
+      "Spread calculated"
+    );
+
+    // Проверки
+    if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          anchorAgeMs: status.anchorAgeMs,
+          maxAge: config.maxDexAnchorAgeMs
+        },
+        "Signal skipped: DEX anchor too old"
+      );
+      return null;
+    }
+
+    if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          liquidity: status.dexLiquidityUsd,
+          minLiquidity: config.dexMinLiquidityUsd
+        },
+        "Signal skipped: DEX liquidity too low"
+      );
+      return null;
+    }
+
+    if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          volumeM5: status.dexVolumeM5,
+          minVolumeM5: config.dexMinVolumeM5Usd
+        },
+        "Signal skipped: DEX volume too low"
+      );
+      return null;
+    }
+
+    if (status.mexcTurnover24h < config.minMexcTurnover24h) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          turnover24h: status.mexcTurnover24h,
+          minTurnover24h: config.minMexcTurnover24h
+        },
+        "Signal skipped: MEXC turnover too low"
+      );
+      return null;
+    }
+
+    if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          bookSpreadPct: status.mexcBookSpreadPct.toFixed(3),
+          maxBookSpreadPct: config.maxMexcBookSpreadPct
+        },
+        "Signal skipped: MEXC book spread too wide"
+      );
+      return null;
+    }
+
+    if (status.dexDriftPct > config.maxDexDriftPct) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          driftPct: status.dexDriftPct.toFixed(3),
+          maxDriftPct: config.maxDexDriftPct
+        },
+        "Signal skipped: DEX drift too high"
+      );
+      return null;
+    }
 
     const now = Date.now();
     const state = this.getState(ticker.symbol);
@@ -141,12 +238,30 @@ export class SpreadEngine {
       entryRef = "BID";
       reason = "MEXC above DEX anchor";
     } else {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          longSpread: status.longSpreadPct.toFixed(3),
+          shortSpread: status.shortSpreadPct.toFixed(3),
+          minSpread: config.minSpreadPct
+        },
+        "Signal skipped: both spreads too small"
+      );
       state.lastDirection = undefined;
       state.confirmCount = 0;
       return null;
     }
 
-    if (now < state.cooldownUntil) return null;
+    if (now < state.cooldownUntil) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          cooldownRemaining: (state.cooldownUntil - now) / 1000
+        },
+        "Signal skipped: in cooldown"
+      );
+      return null;
+    }
 
     if (state.lastDirection === direction) {
       state.confirmCount += 1;
@@ -155,16 +270,63 @@ export class SpreadEngine {
       state.confirmCount = 1;
     }
 
-    if (state.confirmCount < config.signalConfirmTicks) return null;
+    if (state.confirmCount < config.signalConfirmTicks) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          confirmCount: state.confirmCount,
+          requiredTicks: config.signalConfirmTicks
+        },
+        "Signal skipped: not enough confirm ticks"
+      );
+      return null;
+    }
 
     const totalCostsPct = config.assumedFeesPct + config.assumedSlippagePct;
     const netEdgePct = spreadPct - totalCostsPct;
 
-    if (netEdgePct < config.minNetEdgePct) return null;
-    if (now - state.lastSignalAt < config.signalCooldownMs) return null;
+    if (netEdgePct < config.minNetEdgePct) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          spreadPct: spreadPct.toFixed(3),
+          costsPct: totalCostsPct,
+          netEdgePct: netEdgePct.toFixed(3),
+          minNetEdge: config.minNetEdgePct
+        },
+        "Signal skipped: net edge too low"
+      );
+      return null;
+    }
+
+    if (now - state.lastSignalAt < config.signalCooldownMs) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          cooldownRemaining: (config.signalCooldownMs - (now - state.lastSignalAt)) / 1000
+        },
+        "Signal skipped: signal cooldown"
+      );
+      return null;
+    }
 
     state.lastSignalAt = now;
     state.cooldownUntil = now + config.signalCooldownMs;
+
+    logger.warn(
+      {
+        symbol: ticker.symbol,
+        direction,
+        spreadPct: spreadPct.toFixed(3),
+        netEdgePct: netEdgePct.toFixed(3),
+        dexPrice: status.dexPrice.toFixed(6),
+        mexcPrice: status.mexcLast.toFixed(6),
+        mexcBid: status.mexcBid.toFixed(6),
+        mexcAsk: status.mexcAsk.toFixed(6),
+        reason
+      },
+      "SIGNAL GENERATED"
+    );
 
     return {
       id: crypto.randomUUID(),
