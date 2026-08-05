@@ -38,6 +38,15 @@ interface SymbolState {
   lastSignalAt: number;
 }
 
+// ========== Нормализация ==========
+
+function normalizeSymbol(value: string): string {
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[_\-\/\s]/g, "");
+}
+
 function round(value: number, digits = 3): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
@@ -49,13 +58,14 @@ export class SpreadEngine {
 
   updateDexPrice(symbol: string, pair: DexPair): void {
     const now = Date.now();
+    const normalized = normalizeSymbol(symbol);
 
-    this.dexSnapshots.set(symbol, {
+    this.dexSnapshots.set(normalized, {
       ...pair,
       updatedAt: now
     });
 
-    const state = this.getState(symbol);
+    const state = this.getState(normalized);
     state.dexHistory.push({ price: pair.priceUsd, ts: now });
 
     const cutoff = now - 30_000;
@@ -64,6 +74,7 @@ export class SpreadEngine {
     logger.debug(
       {
         symbol,
+        normalized,
         price: pair.priceUsd.toFixed(6),
         liquidity: pair.liquidityUsd.toFixed(0)
       },
@@ -72,7 +83,8 @@ export class SpreadEngine {
   }
 
   getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
-    const anchor = this.dexSnapshots.get(ticker.symbol);
+    const normalized = normalizeSymbol(ticker.symbol);
+    const anchor = this.dexSnapshots.get(normalized);
     if (!anchor) return null;
 
     const now = Date.now();
@@ -92,7 +104,7 @@ export class SpreadEngine {
     const mexcMid = (mexcBid + mexcAsk) / 2;
     const mexcBookSpreadPct = ((mexcAsk - mexcBid) / mexcMid) * 100;
 
-    const state = this.getState(ticker.symbol);
+    const state = this.getState(normalized);
     const dexDriftPct = this.calculateDexDriftPct(state.dexHistory);
 
     const longSpreadPct = ((anchor.priceUsd - mexcAsk) / mexcAsk) * 100;
@@ -125,7 +137,13 @@ export class SpreadEngine {
     const status = this.getAnchorStatus(ticker);
     
     if (!status) {
-      logger.warn({ symbol: ticker.symbol }, "❌ No DEX anchor for symbol");
+      logger.warn(
+        {
+          symbol: ticker.symbol,
+          normalized: normalizeSymbol(ticker.symbol)
+        },
+        "❌ No DEX anchor for symbol"
+      );
       return null;
     }
 
