@@ -34,6 +34,15 @@ export interface UpsertData {
   updatedAt: string;
 }
 
+// ========== Нормализация ==========
+
+function normalizeSymbol(value: string): string {
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[_\-\/\s]/g, "");
+}
+
 export class DexMapper {
   private readonly mappings = new Map<string, TokenMapping>();
   private readonly filePath: string;
@@ -48,7 +57,9 @@ export class DexMapper {
       const rows = JSON.parse(raw) as TokenMapping[];
 
       for (const row of rows) {
-        this.mappings.set(row.mexcSymbol, row);
+        // Нормализуем ключ при загрузке
+        const normalized = normalizeSymbol(row.mexcSymbol);
+        this.mappings.set(normalized, row);
       }
 
       logger.info({ count: this.mappings.size }, "DEX mappings loaded");
@@ -67,7 +78,8 @@ export class DexMapper {
   }
 
   get(mexcSymbol: string): TokenMapping | undefined {
-    return this.mappings.get(mexcSymbol);
+    const normalized = normalizeSymbol(mexcSymbol);
+    return this.mappings.get(normalized);
   }
 
   getActive(): TokenMapping[] {
@@ -77,9 +89,10 @@ export class DexMapper {
   }
 
   upsert(data: UpsertData): void {
-    const existing = this.mappings.get(data.mexcSymbol);
+    const normalized = normalizeSymbol(data.mexcSymbol);
+    const existing = this.mappings.get(normalized);
 
-    this.mappings.set(data.mexcSymbol, {
+    this.mappings.set(normalized, {
       mexcSymbol: data.mexcSymbol,
       baseCoin: existing?.baseCoin ?? "",
       chainId: data.chainId,
@@ -100,6 +113,7 @@ export class DexMapper {
     baseCoin: string,
     pair: DexPair
   ): Promise<TokenMapping> {
+    const normalized = normalizeSymbol(mexcSymbol);
     const mapping: TokenMapping = {
       mexcSymbol,
       baseCoin,
@@ -115,13 +129,14 @@ export class DexMapper {
       status: "active",
     };
 
-    this.mappings.set(mexcSymbol, mapping);
+    this.mappings.set(normalized, mapping);
     await this.save();
     return mapping;
   }
 
   async markNotFound(mexcSymbol: string, baseCoin: string): Promise<void> {
-    this.mappings.set(mexcSymbol, {
+    const normalized = normalizeSymbol(mexcSymbol);
+    this.mappings.set(normalized, {
       mexcSymbol,
       baseCoin,
       chainId: "",
