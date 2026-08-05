@@ -14,17 +14,29 @@ import { PaperExecutionService } from "./services/paper-execution.js";
 import { TelegramNotifier } from "./services/telegram-notifier.js";
 import type { CsvRow, MexcContract, MexcTicker } from "./types.js";
 
+// ========== Нормализация символов ==========
+
+function normalizeSymbol(value: string): string {
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[_\-\/\s]/g, "");
+}
+
 function shouldSkipDexLookup(symbol: string): boolean {
   const upper = symbol.toUpperCase();
   const base = upper.split("_")[0] ?? upper;
+  const normalized = normalizeSymbol(base);
 
   if (upper.includes("_USD1")) return true;
   if (base.includes("STOCK")) return true;
   if (/(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(base)) return true;
-  if (/^\d{3,}/.test(base)) return true;
+  if (/^\d{3,}/.test(normalized)) return true;
 
   return false;
 }
+
+// ========== Bootstrap ==========
 
 async function bootstrap(): Promise<void> {
   await mkdir(config.dataDir, { recursive: true });
@@ -61,10 +73,13 @@ async function bootstrap(): Promise<void> {
       paperStopSpreadPct: config.paperStopSpreadPct,
       dexPreferredChains: config.dexPreferredChains,
       dexPollMs: config.dexPollMs,
-      telegramEnabled: telegramNotifier.enabled
+      telegramEnabled: telegramNotifier.enabled,
+      activeMappings: dexMapper.getActive().length
     },
     "Starting MEXC flip bot: DEX anchor + MEXC paper execution mode"
   );
+
+  // ========== Обработчик новых контрактов ==========
 
   const handleNewContract = async (contract: MexcContract): Promise<void> => {
     await contractsWriter.appendRow({
@@ -78,19 +93,60 @@ async function bootstrap(): Promise<void> {
       contractSize: contract.contractSize ?? ""
     });
 
-    if (shouldSkipDexLookup(contract.symbol)) {
+    // Нормализуем символ для сравнения с маппингом
+    const normalizedSymbol = normalizeSymbol(contract.symbol);
+
+    // 1. Проверяем, есть ли уже маппинг
+    const existing = dexMapper.get(contract.symbol);
+    if (existing && existing.status === "active") {
       logger.info(
-        { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
-        "Skipping DEX lookup for unsupported synthetic contract"
+        {
+          symbol: contract.symbol,
+          normalizedSymbol,
+          chainId: existing.chainId,
+          dexId: existing.dexId,
+          status: existing.status
+        },
+        "✅ Mapping already exists, skipping DEX lookup"
       );
       return;
     }
 
+    // 2. Если это синтетика — вообще не ищем DEX
+    if (shouldSkipDexLookup(contract.symbol)) {
+      logger.info(
+        { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
+        "⛔ Skipping DEX lookup for unsupported synthetic contract"
+      );
+      // Помечаем как not_found, чтобы не проверять каждый раз
+      await dexMapper.markNotFound(contract.symbol, contract.baseCoin ?? "");
+      return;
+    }
+
+    // 3. Если уже помечен как not_found — тоже не ищем
+    if (existing && existing.status === "not_found") {
+      logger.info(
+        { symbol: contract.symbol, mappedAt: existing.mappedAt },
+        "⏭️ Mapping already marked as not_found, skipping DEX lookup"
+      );
+      return;
+    }
+
+    // 4. Только теперь ищем DEX
     const searchQuery = contract.baseCoin ?? contract.symbol.split("_")[0] ?? contract.symbol;
+    logger.info(
+      { symbol: contract.symbol, baseCoin: contract.baseCoin, searchQuery },
+      "🔍 Searching DEX pair for new contract"
+    );
+
     const pair = await dexScreenerClient.findBestPairAcrossChains(searchQuery);
 
     if (!pair) {
-      logger.info({ symbol: contract.symbol, baseCoin: contract.baseCoin }, "No supported DEX pair found for new contract");
+      logger.info(
+        { symbol: contract.symbol, baseCoin: contract.baseCoin, searchQuery },
+        "❌ No supported DEX pair found"
+      );
+      await dexMapper.markNotFound(contract.symbol, contract.baseCoin ?? "");
       return;
     }
 
@@ -114,6 +170,7 @@ async function bootstrap(): Promise<void> {
     logger.info(
       {
         symbol: contract.symbol,
+        normalizedSymbol,
         chainId: pair.chainId,
         dexId: pair.dexId,
         quoteSymbol: pair.quoteSymbol,
@@ -121,11 +178,13 @@ async function bootstrap(): Promise<void> {
         volumeM5: pair.volumeM5,
         priceUsd: pair.priceUsd
       },
-      "Mapped MEXC contract to DEX anchor"
+      "✅ New DEX mapping created"
     );
   };
 
   const contractWatcher = new ContractWatcher(mexcRestClient, handleNewContract);
+
+  // ========== DEX Price Poller ==========
 
   const dexPricePoller = new DexPricePoller(
     dexScreenerClient,
@@ -148,6 +207,8 @@ async function bootstrap(): Promise<void> {
       });
     }
   );
+
+  // ========== MEXC WebSocket ==========
 
   const mexcWsClient = new MexcFuturesWsClient({
     onTicker: async (ticker: MexcTicker) => {
