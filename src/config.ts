@@ -73,7 +73,7 @@ export const config = {
   dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 20_000),
   dexMinVolumeM5Usd: numberEnv("DEX_MIN_VOLUME_M5_USD", 1_000),
 
-  minMexcTurnover24h: numberEnv("MIN_MEXC_TURNOVER_24H", 500_000),
+  minMexcTurnover24h: numberEnv("MIN_MEXC_TURNOVER_24H", 200_000),
   maxMexcBookSpreadPct: numberEnv("MAX_MEXC_BOOK_SPREAD_PCT", 0.35),
   maxDexAnchorAgeMs: numberEnv("MAX_DEX_ANCHOR_AGE_MS", 5_000),
   maxDexDriftPct: numberEnv("MAX_DEX_DRIFT_PCT", 0.6),
