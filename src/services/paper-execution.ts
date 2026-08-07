@@ -354,8 +354,8 @@ export class PaperExecutionService {
     let closeReason = "";
 
     // Сначала проверяем стоп-лосс.
-    // Иначе отрицательный spread попадёт
-    // в условие mean_reverted.
+    // Это важно: отрицательный spread
+    // также удовлетворяет условию take-profit.
     if (
       spreadPct <=
       -config.paperStopSpreadPct
@@ -363,7 +363,6 @@ export class PaperExecutionService {
       shouldClose = true;
       closeReason = "stop_loss";
     } else if (
-      spreadPct >= 0 &&
       spreadPct <=
       config.paperExitSpreadPct
     ) {
