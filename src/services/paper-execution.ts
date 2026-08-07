@@ -353,18 +353,22 @@ export class PaperExecutionService {
     let shouldClose = false;
     let closeReason = "";
 
+    // Сначала проверяем стоп-лосс.
+    // Иначе отрицательный spread попадёт
+    // в условие mean_reverted.
     if (
-      spreadPct <=
-      config.paperExitSpreadPct
-    ) {
-      shouldClose = true;
-      closeReason = "mean_reverted";
-    } else if (
       spreadPct <=
       -config.paperStopSpreadPct
     ) {
       shouldClose = true;
       closeReason = "stop_loss";
+    } else if (
+      spreadPct >= 0 &&
+      spreadPct <=
+      config.paperExitSpreadPct
+    ) {
+      shouldClose = true;
+      closeReason = "mean_reverted";
     } else if (
       holdMs >= config.paperMaxHoldMs
     ) {
@@ -408,7 +412,7 @@ export class PaperExecutionService {
             trade.entryPrice
           ) * 100;
 
-    // Здесь учитываются только расходы MEXC.
+    // Учитываются только расходы MEXC.
     // DEX используется только как reference price.
     const totalCostsPct =
       config.assumedFeesPct +
