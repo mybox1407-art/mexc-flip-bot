@@ -214,6 +214,14 @@ export class MexcFuturesWsClient {
       return null;
     }
 
+    // 🔍 Логирование raw-данных для отладки
+    if (symbol === "ETH_USDT" || symbol === "BTC_USDT" || symbol === "VIRTUAL_USDC") {
+      logger.info({ row }, "Raw ticker data from MEXC");
+    }
+
+    const bid1 = Number(row.bid1 ?? 0);
+    const ask1 = Number(row.ask1 ?? 0);
+
     return {
       symbol,
       timestamp: Number(row.timestamp ?? Date.now()),
@@ -227,8 +235,8 @@ export class MexcFuturesWsClient {
       minAskPrice: Number(row.minAskPrice ?? 0),
       lower24Price: Number(row.lower24Price ?? 0),
       high24Price: Number(row.high24Price ?? 0),
-      bid1: Number(row.bid1 ?? 0),
-      ask1: Number(row.ask1 ?? 0)
+      bid1,
+      ask1
     };
   }
 }
