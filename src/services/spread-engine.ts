@@ -98,7 +98,7 @@ export class SpreadEngine {
 
     const anchor = this.dexSnapshots.get(snapshotKey);
 
-    //if (!anchor) {
+    if (!anchor) {
     //  logger.info(
     //    {
     //      tickerSymbol: ticker.symbol,
@@ -112,8 +112,8 @@ export class SpreadEngine {
     //    },
     //    "⚠️ No anchor for ticker"
     //  );
-    //  return null;
-    // }
+      return null;
+    }
 
     const now = Date.now();
     const anchorAgeMs = now - anchor.updatedAt;
