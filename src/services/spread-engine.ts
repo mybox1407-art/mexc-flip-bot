@@ -10,11 +10,13 @@ import type { DexMapper } from "./dex-mapper.js";
 
 export interface AnchorStatus {
   symbol: string;
+
   dexPrice: number;
   dexLiquidityUsd: number;
   dexVolumeM5: number;
   dexBuysM5: number;
   dexSellsM5: number;
+
   dexId: string;
   chainId: string;
   quoteSymbol: string;
@@ -49,18 +51,21 @@ interface SymbolState {
   lastDirection?: "LONG" | "SHORT";
   confirmCount: number;
   firstConfirmAt: number;
+
   cooldownUntil: number;
   lastSignalAt: number;
+
   lastConfirmedDexUpdatedAt?: number;
 }
 
-const DEX_ANCHOR_MAX_RATIO = 2;
 const DEX_HISTORY_WINDOW_MS = 120_000;
 const DEX_DRIFT_POINTS = 5;
 const SIGNAL_CONFIRM_WINDOW_MS = 5_000;
 const MIN_DEX_HISTORY_POINTS = 2;
 
-function normalizeSymbol(value: string): string {
+function normalizeSymbol(
+  value: string
+): string {
   return String(value)
     .trim()
     .toUpperCase()
@@ -72,7 +77,11 @@ function round(
   digits = 3
 ): number {
   const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
+
+  return (
+    Math.round(value * factor) /
+    factor
+  );
 }
 
 function isPositiveFinite(
@@ -95,22 +104,39 @@ function isNonNegativeFinite(
   );
 }
 
-function isValidDexAnchor(
+function getAnchorDeviationPct(
   dexPrice: number,
   mexcPrice: number
-): boolean {
+): number {
   if (
     !isPositiveFinite(dexPrice) ||
     !isPositiveFinite(mexcPrice)
   ) {
-    return false;
+    return Infinity;
   }
 
-  const ratio =
-    Math.max(dexPrice, mexcPrice) /
-    Math.min(dexPrice, mexcPrice);
+  return (
+    Math.abs(dexPrice - mexcPrice) /
+    mexcPrice *
+    100
+  );
+}
 
-  return ratio <= DEX_ANCHOR_MAX_RATIO;
+function isValidDexAnchor(
+  dexPrice: number,
+  mexcPrice: number
+): boolean {
+  const deviationPct =
+    getAnchorDeviationPct(
+      dexPrice,
+      mexcPrice
+    );
+
+  return (
+    Number.isFinite(deviationPct) &&
+    deviationPct <=
+      config.maxPriceDeviationPct
+  );
 }
 
 export class SpreadEngine {
@@ -129,8 +155,11 @@ export class SpreadEngine {
   private getSnapshotKey(
     symbol: string
   ): string {
-    const normalized = normalizeSymbol(symbol);
-    const mapping = this.dexMapper.get(symbol);
+    const normalized =
+      normalizeSymbol(symbol);
+
+    const mapping =
+      this.dexMapper.get(symbol);
 
     return (
       mapping?.normalizedDexKey ??
@@ -143,6 +172,7 @@ export class SpreadEngine {
     pair: DexPair
   ): void {
     const now = Date.now();
+
     const snapshotKey =
       this.getSnapshotKey(symbol);
 
@@ -161,10 +191,13 @@ export class SpreadEngine {
       return;
     }
 
-    this.dexSnapshots.set(snapshotKey, {
-      ...pair,
-      updatedAt: now
-    });
+    this.dexSnapshots.set(
+      snapshotKey,
+      {
+        ...pair,
+        updatedAt: now
+      }
+    );
 
     const state =
       this.getState(snapshotKey);
@@ -179,7 +212,7 @@ export class SpreadEngine {
 
     state.dexHistory =
       state.dexHistory.filter(
-        (point) => point.ts >= cutoff
+        (item) => item.ts >= cutoff
       );
 
     logger.info(
@@ -191,6 +224,8 @@ export class SpreadEngine {
           pair.liquidityUsd.toFixed(0),
         volumeM5:
           pair.volumeM5.toFixed(0),
+        buysM5: pair.buysM5,
+        sellsM5: pair.sellsM5,
         historySize:
           state.dexHistory.length
       },
@@ -214,6 +249,15 @@ export class SpreadEngine {
       !mapping ||
       mapping.status !== "active"
     ) {
+      logger.debug(
+        {
+          tickerSymbol,
+          mappingStatus: mapping?.status,
+          snapshotKey
+        },
+        "No active DEX mapping"
+      );
+
       return null;
     }
 
@@ -225,15 +269,28 @@ export class SpreadEngine {
     }
 
     if (!this.isValidDexPair(anchor)) {
+      logger.warn(
+        {
+          tickerSymbol,
+          snapshotKey,
+          priceUsd: anchor.priceUsd,
+          liquidityUsd:
+            anchor.liquidityUsd,
+          volumeM5: anchor.volumeM5
+        },
+        "Invalid DEX snapshot"
+      );
+
       return null;
     }
 
     const now = Date.now();
 
-    const anchorAgeMs = Math.max(
-      0,
-      now - anchor.updatedAt
-    );
+    const anchorAgeMs =
+      Math.max(
+        0,
+        now - anchor.updatedAt
+      );
 
     const mexcBid =
       Number(ticker.bid1);
@@ -256,6 +313,15 @@ export class SpreadEngine {
     }
 
     if (mexcAsk < mexcBid) {
+      logger.warn(
+        {
+          tickerSymbol,
+          mexcBid,
+          mexcAsk
+        },
+        "Crossed MEXC book"
+      );
+
       return null;
     }
 
@@ -283,6 +349,24 @@ export class SpreadEngine {
         mexcMid
       )
     ) {
+      const deviationPct =
+        getAnchorDeviationPct(
+          dexPrice,
+          mexcMid
+        );
+
+      logger.debug(
+        {
+          symbol: tickerSymbol,
+          dexPrice,
+          mexcMid,
+          deviationPct,
+          maxDeviationPct:
+            config.maxPriceDeviationPct
+        },
+        "DEX anchor deviation too high"
+      );
+
       return null;
     }
 
@@ -303,6 +387,7 @@ export class SpreadEngine {
 
     return {
       symbol: tickerSymbol,
+
       dexPrice,
       dexLiquidityUsd:
         anchor.liquidityUsd,
@@ -312,21 +397,27 @@ export class SpreadEngine {
         anchor.buysM5,
       dexSellsM5:
         anchor.sellsM5,
+
       dexId: anchor.dexId,
       chainId: anchor.chainId,
       quoteSymbol: anchor.quoteSymbol,
-      dexPairAddress: anchor.pairAddress,
+      dexPairAddress:
+        anchor.pairAddress,
 
       anchorAgeMs,
-      dexUpdatedAt: anchor.updatedAt,
+      dexUpdatedAt:
+        anchor.updatedAt,
 
-      dexDriftPct: drift.rangePct,
+      dexDriftPct:
+        drift.rangePct,
+
       dexDirectionalDriftPct:
         drift.directionalPct,
 
       mexcBid,
       mexcAsk,
       mexcLast,
+
       mexcTurnover24h:
         isNonNegativeFinite(
           mexcTurnover24h
@@ -367,6 +458,17 @@ export class SpreadEngine {
       status.anchorAgeMs >
       config.maxDexAnchorAgeMs
     ) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          anchorAgeMs:
+            status.anchorAgeMs,
+          maxAge:
+            config.maxDexAnchorAgeMs
+        },
+        "DEX anchor is stale"
+      );
+
       return null;
     }
 
@@ -381,6 +483,26 @@ export class SpreadEngine {
       status.dexVolumeM5 <
       config.dexMinVolumeM5Usd
     ) {
+      return null;
+    }
+
+    if (
+      status.dexBuysM5 <
+        config.minDexBuysSellsM5 ||
+      status.dexSellsM5 <
+        config.minDexBuysSellsM5
+    ) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          buysM5: status.dexBuysM5,
+          sellsM5: status.dexSellsM5,
+          minimum:
+            config.minDexBuysSellsM5
+        },
+        "DEX buys/sells activity too low"
+      );
+
       return null;
     }
 
@@ -414,15 +536,23 @@ export class SpreadEngine {
     }
 
     const longValid =
+      Number.isFinite(
+        status.longSpreadPct
+      ) &&
       status.longSpreadPct >=
-      config.minSpreadPct;
+        config.minSpreadPct;
 
     const shortValid =
+      Number.isFinite(
+        status.shortSpreadPct
+      ) &&
       status.shortSpreadPct >=
-      config.minSpreadPct;
+        config.minSpreadPct;
 
     if (!longValid && !shortValid) {
-      state.lastDirection = undefined;
+      state.lastDirection =
+        undefined;
+
       state.confirmCount = 0;
       state.firstConfirmAt = 0;
       state.lastConfirmedDexUpdatedAt =
@@ -438,9 +568,11 @@ export class SpreadEngine {
 
     if (
       longValid &&
-      (!shortValid ||
+      (
+        !shortValid ||
         status.longSpreadPct >=
-          status.shortSpreadPct)
+          status.shortSpreadPct
+      )
     ) {
       direction = "LONG";
       spreadPct =
@@ -462,6 +594,15 @@ export class SpreadEngine {
       status.dexDirectionalDriftPct <
         -config.maxDexDriftPct
     ) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          directionalDriftPct:
+            status.dexDirectionalDriftPct
+        },
+        "LONG skipped: DEX anchor moving down"
+      );
+
       return null;
     }
 
@@ -470,6 +611,15 @@ export class SpreadEngine {
       status.dexDirectionalDriftPct >
         config.maxDexDriftPct
     ) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          directionalDriftPct:
+            status.dexDirectionalDriftPct
+        },
+        "SHORT skipped: DEX anchor moving up"
+      );
+
       return null;
     }
 
@@ -477,6 +627,15 @@ export class SpreadEngine {
       state.lastConfirmedDexUpdatedAt ===
       status.dexUpdatedAt
     ) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          dexUpdatedAt:
+            status.dexUpdatedAt
+        },
+        "Duplicate DEX snapshot"
+      );
+
       return null;
     }
 
@@ -484,17 +643,21 @@ export class SpreadEngine {
       status.dexUpdatedAt;
 
     if (
-      state.lastDirection !== direction
+      state.lastDirection !==
+      direction
     ) {
-      state.lastDirection = direction;
+      state.lastDirection =
+        direction;
+
       state.confirmCount = 1;
       state.firstConfirmAt = now;
     } else {
-      const age =
+      const confirmationAge =
         now - state.firstConfirmAt;
 
       if (
-        age > SIGNAL_CONFIRM_WINDOW_MS
+        confirmationAge >
+        SIGNAL_CONFIRM_WINDOW_MS
       ) {
         state.confirmCount = 1;
         state.firstConfirmAt = now;
@@ -510,20 +673,37 @@ export class SpreadEngine {
       return null;
     }
 
+    if (
+      !Number.isFinite(spreadPct) ||
+      spreadPct <= 0
+    ) {
+      return null;
+    }
+
     const totalCostsPct =
-      config.mexcEntryFeePct +
-      config.mexcExitFeePct +
-      config.mexcEntrySlippagePct +
-      config.mexcExitSlippagePct +
-      config.latencyBufferPct;
+      config.roundTripCostPct;
 
     const netEdgePct =
       spreadPct - totalCostsPct;
 
     if (
       !Number.isFinite(netEdgePct) ||
-      netEdgePct < config.minNetEdgePct
+      netEdgePct <
+        config.minNetEdgePct
     ) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          direction,
+          spreadPct,
+          totalCostsPct,
+          netEdgePct,
+          minNetEdge:
+            config.minNetEdgePct
+        },
+        "Net edge too low"
+      );
+
       return null;
     }
 
@@ -535,67 +715,86 @@ export class SpreadEngine {
     }
 
     state.lastSignalAt = now;
+
     state.cooldownUntil =
       now + config.signalCooldownMs;
 
+    logger.warn(
+      {
+        symbol: ticker.symbol,
+        direction,
+        spreadPct: spreadPct.toFixed(4),
+        netEdgePct:
+          netEdgePct.toFixed(4),
+        dexPrice:
+          status.dexPrice.toFixed(6),
+        mexcBid:
+          status.mexcBid.toFixed(6),
+        mexcAsk:
+          status.mexcAsk.toFixed(6),
+        confirmCount:
+          state.confirmCount,
+        reason
+      },
+      "SIGNAL GENERATED"
+    );
+
     return {
       id: crypto.randomUUID(),
+
       detectedAt:
         new Date(now).toISOString(),
 
       symbol: ticker.symbol,
       direction,
 
-      spreadPct: round(spreadPct),
-      netEdgePct: round(netEdgePct),
-      priceDeviationPct: round(spreadPct),
+      spreadPct:
+        round(spreadPct),
 
-      currentPrice: round(
-        status.mexcLast,
-        6
-      ),
+      netEdgePct:
+        round(netEdgePct),
 
-      referencePrice: round(
-        status.dexPrice,
-        6
-      ),
+      priceDeviationPct:
+        round(spreadPct),
 
-      movePct: round(spreadPct),
+      currentPrice:
+        round(status.mexcLast, 6),
 
-      dexPrice: round(
-        status.dexPrice,
-        6
-      ),
+      referencePrice:
+        round(status.dexPrice, 6),
 
-      mexcPrice: round(
-        status.mexcLast,
-        6
-      ),
+      movePct:
+        round(spreadPct),
 
-      mexcBid: round(
-        status.mexcBid,
-        6
-      ),
+      dexPrice:
+        round(status.dexPrice, 6),
 
-      mexcAsk: round(
-        status.mexcAsk,
-        6
-      ),
+      mexcPrice:
+        round(status.mexcLast, 6),
 
-      mexcTurnover24h: round(
-        status.mexcTurnover24h,
-        4
-      ),
+      mexcBid:
+        round(status.mexcBid, 6),
 
-      dexLiquidityUsd: round(
-        status.dexLiquidityUsd,
-        2
-      ),
+      mexcAsk:
+        round(status.mexcAsk, 6),
 
-      dexVolumeM5: round(
-        status.dexVolumeM5,
-        2
-      ),
+      mexcTurnover24h:
+        round(
+          status.mexcTurnover24h,
+          4
+        ),
+
+      dexLiquidityUsd:
+        round(
+          status.dexLiquidityUsd,
+          2
+        ),
+
+      dexVolumeM5:
+        round(
+          status.dexVolumeM5,
+          2
+        ),
 
       dexBuysM5:
         status.dexBuysM5,
@@ -611,9 +810,10 @@ export class SpreadEngine {
 
       entryRef,
 
-      mexcBookSpreadPct: round(
-        status.mexcBookSpreadPct
-      ),
+      mexcBookSpreadPct:
+        round(
+          status.mexcBookSpreadPct
+        ),
 
       anchorAgeMs:
         status.anchorAgeMs,
@@ -621,9 +821,8 @@ export class SpreadEngine {
       dexUpdatedAt:
         status.dexUpdatedAt,
 
-      dexDriftPct: round(
-        status.dexDriftPct
-      ),
+      dexDriftPct:
+        round(status.dexDriftPct),
 
       dexDirectionalDriftPct:
         round(
@@ -641,24 +840,34 @@ export class SpreadEngine {
     pair: DexPair
   ): boolean {
     return (
-      isPositiveFinite(pair.priceUsd) &&
+      isPositiveFinite(
+        pair.priceUsd
+      ) &&
       isNonNegativeFinite(
         pair.liquidityUsd
       ) &&
       isNonNegativeFinite(
         pair.volumeM5
       ) &&
-      Number.isInteger(pair.buysM5) &&
+      Number.isInteger(
+        pair.buysM5
+      ) &&
       pair.buysM5 >= 0 &&
-      Number.isInteger(pair.sellsM5) &&
+      Number.isInteger(
+        pair.sellsM5
+      ) &&
       pair.sellsM5 >= 0 &&
-      typeof pair.dexId === "string" &&
+      typeof pair.dexId ===
+        "string" &&
       pair.dexId.length > 0 &&
-      typeof pair.chainId === "string" &&
+      typeof pair.chainId ===
+        "string" &&
       pair.chainId.length > 0 &&
-      typeof pair.quoteSymbol === "string" &&
+      typeof pair.quoteSymbol ===
+        "string" &&
       pair.quoteSymbol.length > 0 &&
-      typeof pair.pairAddress === "string" &&
+      typeof pair.pairAddress ===
+        "string" &&
       pair.pairAddress.length > 0
     );
   }
@@ -725,7 +934,9 @@ export class SpreadEngine {
     const first = prices[0];
     const last =
       prices[prices.length - 1];
-    const mid = (min + max) / 2;
+
+    const mid =
+      (min + max) / 2;
 
     if (
       !isPositiveFinite(mid) ||
@@ -741,6 +952,7 @@ export class SpreadEngine {
     return {
       rangePct:
         ((max - min) / mid) * 100,
+
       directionalPct:
         ((last - first) / first) * 100
     };
