@@ -80,7 +80,7 @@ export const config = {
 
   minSpreadPct: numberEnv("MIN_SPREAD_PCT", 1.2),
   minNetEdgePct: numberEnv("MIN_NET_EDGE_PCT", 0.8),
-  assumedFeesPct: numberEnv("ASSUMED_FEES_PCT", 0.04),
+  assumedFeesPct: numberEnv("ASSUMED_FEES_PCT", 0.064),
   assumedSlippagePct: numberEnv("ASSUMED_SLIPPAGE_PCT", 0.08),
 
   signalConfirmTicks: numberEnv("SIGNAL_CONFIRM_TICKS", 3),
