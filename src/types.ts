@@ -25,6 +25,8 @@ export interface MexcTicker {
   minAskPrice: number;
   lower24Price: number;
   high24Price: number;
+  bid1: number;  // ← добавь это поле
+  ask1: number; // ← добавь это поле
 }
 
 export interface PricePoint {
