@@ -115,7 +115,7 @@ async function bootstrap(): Promise<void> {
         { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
         "⛔ Skipping DEX lookup for unsupported synthetic contract"
       );
-      await dexMapper.markNotFound(contract.symbol, contract.baseCoin ?? "");
+      // Убрано: await dexMapper.markNotFound(...)
       return;
     }
 
@@ -140,7 +140,7 @@ async function bootstrap(): Promise<void> {
         { symbol: contract.symbol, baseCoin: contract.baseCoin, searchQuery },
         "❌ No supported DEX pair found"
       );
-      await dexMapper.markNotFound(contract.symbol, contract.baseCoin ?? "");
+      // Убрано: await dexMapper.markNotFound(...)
       return;
     }
 
