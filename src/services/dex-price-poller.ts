@@ -51,7 +51,12 @@ export class DexPricePoller {
         try {
           if (!mapping.chainId || !mapping.dexPairAddress) {
             logger.warn(
-              { symbol: mapping.mexcSymbol },
+              {
+                symbol: mapping.mexcSymbol,
+                status: mapping.status,
+                chainId: mapping.chainId,
+                dexPairAddress: mapping.dexPairAddress
+              },
               "Missing chainId or dexPairAddress"
             );
             continue;
@@ -64,19 +69,22 @@ export class DexPricePoller {
 
           if (!pair) {
             logger.warn(
-              { symbol: mapping.mexcSymbol },
+              {
+                symbol: mapping.mexcSymbol,
+                status: mapping.status
+              },
               "No pair returned from DexScreener"
             );
             continue;
           }
 
-          logger.debug(
+          logger.info(
             {
               symbol: mapping.mexcSymbol,
               price: pair.priceUsd,
               liquidity: pair.liquidityUsd
             },
-            "DEX price updated"
+            "DEX price fetched, calling onPrice"
           );
 
           await this.onPrice(mapping.mexcSymbol, pair);
