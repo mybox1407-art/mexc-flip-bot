@@ -25,8 +25,8 @@ export interface MexcTicker {
   minAskPrice: number;
   lower24Price: number;
   high24Price: number;
-  bid1: number;  // ← добавь это поле
-  ask1: number; // ← добавь это поле
+  bid1: number;
+  ask1: number;
 }
 
 export interface PricePoint {
@@ -75,23 +75,42 @@ export interface PaperTrade {
   symbol: string;
   direction: "LONG" | "SHORT";
   status: "OPEN" | "CLOSED";
+
   openedAt: string;
   closedAt?: string;
+
   entryPrice: number;
   exitPrice?: number;
+
   entryRef: "ASK" | "BID";
   exitRef?: "ASK" | "BID";
+
   qtyUsd: number;
   qtyToken: number;
+
+  // Состояние депозита на момент открытия.
+  depositAtEntry: number;
+
+  // Доля депозита, использованная для сделки.
+  // Например 0.3 = 30%.
+  allocationPct: number;
+
+  // Состояние депозита после закрытия сделки.
+  depositAfterClose?: number;
+
   dexAnchorAtEntry: number;
   dexAnchorAtExit?: number;
+
   entrySpreadPct: number;
   exitSpreadPct?: number;
+
   grossPnlPct?: number;
   netPnlPct?: number;
   grossPnlUsd?: number;
   netPnlUsd?: number;
+
   holdMs?: number;
+
   openReason: string;
   closeReason?: string;
 }
