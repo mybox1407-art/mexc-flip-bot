@@ -24,6 +24,7 @@ export class MexcFuturesWsClient {
 
   private readonly subscribedDeals = new Set<string>();
   private readonly subscribedDepths = new Set<string>();
+  private readonly subscribedTickers = new Set<string>(); // ← для push.ticker
 
   constructor(private readonly handlers: MexcWsHandlers) {}
 
@@ -53,6 +54,22 @@ export class MexcFuturesWsClient {
   subscribeDepth(symbol: string): void {
     this.subscribedDepths.add(symbol);
     this.sendSubscription("sub.depth", { symbol });
+  }
+
+  // ← Подписка на push.ticker для конкретного символа
+  private subscribeTicker(symbol: string): void {
+    if (this.subscribedTickers.has(symbol)) {
+      return;
+    }
+
+    this.subscribedTickers.add(symbol);
+    this.send({
+      method: "sub.ticker",
+      param: { symbol },
+      gzip: false
+    });
+
+    logger.info({ symbol }, "Subscribed to push.ticker");
   }
 
   private openConnection(): void {
@@ -174,11 +191,22 @@ export class MexcFuturesWsClient {
       return;
     }
 
+    // ← Подтверждение подписки на push.ticker
+    if (channel === "rs.sub.ticker") {
+      const symbol = String(message.param?.symbol ?? "");
+      logger.info({ symbol }, "MEXC push.ticker subscription confirmed");
+      return;
+    }
+
+    // ← Обработка push.tickers (общий поток)
     if (channel === "push.tickers" && Array.isArray(data)) {
       for (const row of data) {
         const ticker = this.toTicker(row);
 
         if (ticker) {
+          // ← Подписываемся на push.ticker для этого символа
+          this.subscribeTicker(ticker.symbol);
+
           this.tickerCount++;
 
           if (this.tickerCount % 1000 === 0) {
@@ -191,6 +219,16 @@ export class MexcFuturesWsClient {
           }
           this.handlers.onTicker(ticker);
         }
+      }
+      return;
+    }
+
+    // ← Обработка push.ticker (индивидуальный поток с bid1/ask1)
+    if (channel === "push.ticker" && data && !Array.isArray(data)) {
+      const ticker = this.tickerFromPushTicker(data);
+
+      if (ticker) {
+        this.handlers.onTicker(ticker);
       }
       return;
     }
@@ -214,18 +252,13 @@ export class MexcFuturesWsClient {
       return null;
     }
 
-    // 🔍 Логирование raw-данных для отладки
-    if (symbol === "ETH_USDT" || symbol === "BTC_USDT" || symbol === "VIRTUAL_USDC") {
-      logger.info({ row }, "Raw ticker data from MEXC");
-    }
-
-    const bid1 = Number(row.bid1 ?? 0);
-    const ask1 = Number(row.ask1 ?? 0);
+    // В push.tickers нет bid1/ask1, используем lastPrice
+    const lastPrice = Number(row.lastPrice ?? 0);
 
     return {
       symbol,
       timestamp: Number(row.timestamp ?? Date.now()),
-      lastPrice: Number(row.lastPrice ?? 0),
+      lastPrice,
       volume24: Number(row.volume24 ?? 0),
       amount24: Number(row.amount24 ?? 0),
       riseFallRate: Number(row.riseFallRate ?? 0),
@@ -235,6 +268,35 @@ export class MexcFuturesWsClient {
       minAskPrice: Number(row.minAskPrice ?? 0),
       lower24Price: Number(row.lower24Price ?? 0),
       high24Price: Number(row.high24Price ?? 0),
+      bid1: lastPrice,  // ← временно lastPrice
+      ask1: lastPrice   // ← временно lastPrice
+    };
+  }
+
+  private tickerFromPushTicker(data: JsonRecord): MexcTicker | null {
+    const symbol = String(data.symbol ?? "");
+
+    if (!symbol) {
+      return null;
+    }
+
+    const lastPrice = Number(data.lastPrice ?? 0);
+    const bid1 = Number(data.bid1 ?? lastPrice);
+    const ask1 = Number(data.ask1 ?? lastPrice);
+
+    return {
+      symbol,
+      timestamp: Number(data.timestamp ?? Date.now()),
+      lastPrice,
+      volume24: Number(data.volume24 ?? 0),
+      amount24: Number(data.amount24 ?? 0),
+      riseFallRate: Number(data.riseFallRate ?? 0),
+      fairPrice: Number(data.fairPrice ?? 0),
+      indexPrice: Number(data.indexPrice ?? 0),
+      maxBidPrice: Number(data.maxBidPrice ?? 0),
+      minAskPrice: Number(data.minAskPrice ?? 0),
+      lower24Price: Number(data.lower24Price ?? 0),
+      high24Price: Number(data.high24Price ?? 0),
       bid1,
       ask1
     };
