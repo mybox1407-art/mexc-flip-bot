@@ -324,7 +324,7 @@ export class SpreadEngine {
         {
           symbol: ticker.symbol,
           driftPct: status.dexDriftPct.toFixed(3),
-          maxDriftPct: config.maxDriftPct
+          maxDriftPct: config.maxDexDriftPct
         },
         "❌ DEX drift too high"
       );
