@@ -97,16 +97,6 @@ async function bootstrap(): Promise<void> {
 
     const existing = dexMapper.get(contract.symbol);
     if (existing && existing.status === "active") {
-      logger.debug(
-        {
-          symbol: contract.symbol,
-          normalizedSymbol,
-          chainId: existing.chainId,
-          dexId: existing.dexId,
-          status: existing.status
-        },
-        "✅ Mapping already exists, skipping DEX lookup"
-      );
       return;
     }
 
@@ -115,32 +105,18 @@ async function bootstrap(): Promise<void> {
         { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
         "⛔ Skipping DEX lookup for unsupported synthetic contract"
       );
-      // Убрано: await dexMapper.markNotFound(...)
       return;
     }
 
     if (existing && existing.status === "not_found") {
-      logger.debug(
-        { symbol: contract.symbol, mappedAt: existing.mappedAt },
-        "⏭️ Mapping already marked as not_found, skipping DEX lookup"
-      );
       return;
     }
 
     const searchQuery = contract.baseCoin ?? contract.symbol.split("_")[0] ?? contract.symbol;
-    logger.info(
-      { symbol: contract.symbol, baseCoin: contract.baseCoin, searchQuery },
-      "🔍 Searching DEX pair for new contract"
-    );
 
     const pair = await dexScreenerClient.findBestPairAcrossChains(searchQuery);
 
     if (!pair) {
-      logger.info(
-        { symbol: contract.symbol, baseCoin: contract.baseCoin, searchQuery },
-        "❌ No supported DEX pair found"
-      );
-      // Убрано: await dexMapper.markNotFound(...)
       return;
     }
 
