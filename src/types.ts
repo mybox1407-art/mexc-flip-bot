@@ -39,6 +39,7 @@ export interface FlipSignal {
   detectedAt: string;
   symbol: string;
   direction: "LONG" | "SHORT";
+
   spreadPct: number;
   netEdgePct: number;
   priceDeviationPct: number;
@@ -57,6 +58,7 @@ export interface FlipSignal {
   dexVolumeM5: number;
   dexBuysM5: number;
   dexSellsM5: number;
+
   dexId: string;
   chainId: string;
   quoteSymbol: string;
@@ -88,14 +90,14 @@ export interface PaperTrade {
   qtyUsd: number;
   qtyToken: number;
 
-  // Состояние депозита на момент открытия.
+  // Депозит на момент открытия сделки.
   depositAtEntry: number;
 
   // Доля депозита, использованная для сделки.
-  // Например 0.3 = 30%.
+  // 0.3 = 30%.
   allocationPct: number;
 
-  // Состояние депозита после закрытия сделки.
+  // Депозит после закрытия сделки.
   depositAfterClose?: number;
 
   dexAnchorAtEntry: number;
@@ -106,6 +108,7 @@ export interface PaperTrade {
 
   grossPnlPct?: number;
   netPnlPct?: number;
+
   grossPnlUsd?: number;
   netPnlUsd?: number;
 
@@ -124,5 +127,10 @@ export interface ContractWatchState {
 }
 
 export interface CsvRow {
-  [key: string]: string | number | boolean | null | undefined;
+  [key: string]:
+    | string
+    | number
+    | boolean
+    | null
+    | undefined;
 }
