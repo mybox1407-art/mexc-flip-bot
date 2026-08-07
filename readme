@@ -1,3 +1,4 @@
+docker compose down
 cd ~
 rm -rf mexc-flip-bot
 git clone https://github.com/mybox1407-art/mexc-flip-bot.git
