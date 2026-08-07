@@ -47,7 +47,7 @@ interface SymbolState {
 // Локальные защитные ограничения.
 // Их можно позже перенести в config.ts.
 const DEX_ANCHOR_MAX_RATIO = 2;
-const DEX_HISTORY_WINDOW_MS = 30_000;
+const DEX_HISTORY_WINDOW_MS = 120_000;
 const DEX_DRIFT_POINTS = 5;
 const SIGNAL_CONFIRM_WINDOW_MS = 5_000;
 const MIN_DEX_HISTORY_POINTS = 2;
