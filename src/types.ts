@@ -34,6 +34,15 @@ export interface PricePoint {
   timestamp: number;
 }
 
+export type CloseReason =
+  | "mean_reverted_profit"
+  | "mean_reverted_loss"
+  | "stop_loss"
+  | "timeout"
+  | "anchor_moved_against_position"
+  | "anchor_stale"
+  | "liquidity_drop";
+
 export interface FlipSignal {
   id: string;
   detectedAt: string;
@@ -67,7 +76,9 @@ export interface FlipSignal {
   entryRef: "ASK" | "BID";
   mexcBookSpreadPct: number;
   anchorAgeMs: number;
+  dexUpdatedAt: number;
   dexDriftPct: number;
+  dexDirectionalDriftPct: number;
   confirmCount: number;
   reason: string;
 }
@@ -90,18 +101,18 @@ export interface PaperTrade {
   qtyUsd: number;
   qtyToken: number;
 
-  // Депозит на момент открытия сделки.
   depositAtEntry: number;
 
-  // Доля депозита, использованная для сделки.
-  // 0.3 = 30%.
+  // 0.3 = 30%, 0.003 = 0.3%
   allocationPct: number;
 
-  // Депозит после закрытия сделки.
   depositAfterClose?: number;
 
   dexAnchorAtEntry: number;
   dexAnchorAtExit?: number;
+
+  dexSnapshotAtEntry?: number;
+  dexSnapshotAtExit?: number;
 
   entrySpreadPct: number;
   exitSpreadPct?: number;
@@ -115,7 +126,7 @@ export interface PaperTrade {
   holdMs?: number;
 
   openReason: string;
-  closeReason?: string;
+  closeReason?: CloseReason;
 }
 
 export interface ContractWatchState {
