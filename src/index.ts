@@ -81,7 +81,7 @@ async function bootstrap(): Promise<void> {
 
   // ========== Startup tickers (история) ==========
 
-  // Тикеры, которые были обработаны в startup backfill (по STARTUP_BACKFILL_LIMIT)
+  // Тикеры, которые были обработаны в startup backfill и не имеют active mapping
   const startupTickers = new Set<string>();
 
   // ========== Обработчик новых контрактов ==========
@@ -100,11 +100,9 @@ async function bootstrap(): Promise<void> {
 
     const normalizedSymbol = normalizeSymbol(contract.symbol);
 
-    // Добавляем в set startup-тикеров (история)
-    startupTickers.add(contract.symbol);
-
     const existing = dexMapper.get(contract.symbol);
     if (existing && existing.status === "active") {
+      // Mapping уже есть и active — не добавляем в startupTickers
       return;
     }
 
@@ -113,10 +111,14 @@ async function bootstrap(): Promise<void> {
         { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
         "⛔ Skipping DEX lookup for unsupported synthetic contract"
       );
+      // Добавляем в startupTickers, чтобы не обрабатывать повторно
+      startupTickers.add(contract.symbol);
       return;
     }
 
     if (existing && existing.status === "not_found") {
+      // Mapping явно не найден — добавляем в startupTickers
+      startupTickers.add(contract.symbol);
       return;
     }
 
@@ -125,6 +127,8 @@ async function bootstrap(): Promise<void> {
     const pair = await dexScreenerClient.findBestPairAcrossChains(searchQuery);
 
     if (!pair) {
+      // Пара не найдена — добавляем в startupTickers
+      startupTickers.add(contract.symbol);
       return;
     }
 
@@ -162,6 +166,8 @@ async function bootstrap(): Promise<void> {
       },
       "✅ New DEX mapping created"
     );
+
+    // Mapping создан успешно — НЕ добавляем в startupTickers
   };
 
   const contractWatcher = new ContractWatcher(mexcRestClient, handleNewContract);
@@ -194,7 +200,7 @@ async function bootstrap(): Promise<void> {
 
   const mexcWsClient = new MexcFuturesWsClient({
     onTicker: async (ticker: MexcTicker) => {
-      // Пропускаем тикеры, которые были в startup backfill (история)
+      // Пропускаем тикеры, которые были в startup backfill и не имеют active mapping
       if (startupTickers.has(ticker.symbol)) {
         return;
       }
