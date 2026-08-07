@@ -97,21 +97,27 @@ export class SpreadEngine {
     const mapping = this.dexMapper.get(ticker.symbol);
     const snapshotKey = mapping?.normalizedDexKey ?? normalized;
 
+    // 1. Нет active mapping — это не "no anchor", просто игнорируем
+    if (!mapping || mapping.status !== "active") {
+      return null;
+    }
+
     const anchor = this.dexSnapshots.get(snapshotKey);
 
+    // 2. Mapping есть, но anchor snapshot отсутствует
     if (!anchor) {
       logger.info(
         {
           tickerSymbol: ticker.symbol,
           snapshotKey,
-          mappingDexKey: mapping?.normalizedDexKey,
+          mappingDexKey: mapping.normalizedDexKey,
           hasAnchor: false,
           snapshotKeysCount: this.dexSnapshots.size,
-          mappingStatus: mapping?.status,
-          mappingChainId: mapping?.chainId,
-          mappingDexPairAddress: mapping?.dexPairAddress
+          mappingStatus: mapping.status,
+          mappingChainId: mapping.chainId,
+          mappingDexPairAddress: mapping.dexPairAddress
         },
-        "⚠️ No anchor for ticker"
+        "⚠️ No anchor snapshot for mapped ticker"
       );
       return null;
     }
