@@ -59,7 +59,11 @@ export class DexMapper {
       const rows = JSON.parse(raw) as TokenMapping[];
 
       for (const row of rows) {
-        // Нормализуем ключ при загрузке
+        // Загружаем только active
+        if (row.status !== "active") {
+          continue;
+        }
+
         const normalized = normalizeSymbol(row.mexcSymbol);
         this.mappings.set(normalized, row);
       }
@@ -72,9 +76,15 @@ export class DexMapper {
 
   async save(): Promise<void> {
     await mkdir(config.dataDir, { recursive: true });
+
+    // Сохраняем только active
+    const activeMappings = [...this.mappings.values()].filter(
+      (mapping) => mapping.status === "active"
+    );
+
     await writeFile(
       this.filePath,
-      JSON.stringify([...this.mappings.values()], null, 2),
+      JSON.stringify(activeMappings, null, 2),
       "utf8"
     );
   }
@@ -139,23 +149,8 @@ export class DexMapper {
   }
 
   async markNotFound(mexcSymbol: string, baseCoin: string): Promise<void> {
-    const normalized = normalizeSymbol(mexcSymbol);
-    this.mappings.set(normalized, {
-      mexcSymbol,
-      baseCoin,
-      chainId: "",
-      baseTokenAddress: "",
-      quoteTokenAddress: "",
-      quoteSymbol: "",
-      dexPairAddress: "",
-      dexId: "",
-      liquidityUsd: 0,
-      pairCreatedAt: undefined,
-      mappedAt: new Date().toISOString(),
-      status: "not_found",
-      normalizedDexKey: normalizeSymbol(`${baseCoin}_UNKNOWN`),
-    });
-
-    await this.save();
+    // Больше не сохраняем not_found в файл
+    // Просто ничего не делаем, чтобы не забивать файл
+    return;
   }
 }
