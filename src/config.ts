@@ -1,101 +1,128 @@
-import "dotenv/config";
-
-function requireEnv(name: string, fallback?: string): string {
-  const value = process.env[name] ?? fallback;
-
-  if (value === undefined || value === "") {
-    throw new Error(`Missing required env: ${name}`);
-  }
-
-  return value;
+export interface MexcContract {
+  symbol: string;
+  displayName?: string;
+  baseCoin?: string;
+  quoteCoin?: string;
+  settleCoin?: string;
+  contractSize?: number;
+  priceUnit?: number;
+  volUnit?: number;
+  minVol?: number;
+  maxLeverage?: number;
+  [key: string]: unknown;
 }
 
-function numberEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") {
-    return fallback;
-  }
-
-  const value = Number(raw);
-  if (Number.isNaN(value)) {
-    throw new Error(`Invalid number env: ${name}=${raw}`);
-  }
-
-  return value;
+export interface MexcTicker {
+  symbol: string;
+  timestamp: number;
+  lastPrice: number;
+  volume24: number;
+  amount24: number;
+  riseFallRate: number;
+  fairPrice: number;
+  indexPrice: number;
+  maxBidPrice: number;
+  minAskPrice: number;
+  lower24Price: number;
+  high24Price: number;
+  bid1: number;
+  ask1: number;
 }
 
-function stringListEnv(name: string, fallback: string[]): string[] {
-  const raw = process.env[name];
-  if (!raw) {
-    return fallback;
-  }
-
-  return raw
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+export interface PricePoint {
+  price: number;
+  timestamp: number;
 }
 
-export const config = {
-  nodeEnv: process.env.NODE_ENV ?? "development",
-  logLevel: process.env.LOG_LEVEL ?? "info",
+export interface FlipSignal {
+  id: string;
+  detectedAt: string;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  spreadPct: number;
+  netEdgePct: number;
+  priceDeviationPct: number;
 
-  dataDir: process.env.DATA_DIR ?? "data",
+  currentPrice: number;
+  referencePrice: number;
+  movePct: number;
 
-  mexcRestUrl: requireEnv("MEXC_REST_URL", "https://contract.mexc.com"),
-  mexcWsUrl: requireEnv("MEXC_WS_URL", "wss://contract.mexc.com/edge"),
+  dexPrice: number;
+  mexcPrice: number;
+  mexcBid: number;
+  mexcAsk: number;
+  mexcTurnover24h: number;
 
-  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
-  telegramChatId: process.env.TELEGRAM_CHAT_ID,
+  dexLiquidityUsd: number;
+  dexVolumeM5: number;
+  dexBuysM5: number;
+  dexSellsM5: number;
+  dexId: string;
+  chainId: string;
+  quoteSymbol: string;
+  dexPairAddress: string;
 
-  contractPollMs: numberEnv("CONTRACT_POLL_MS", 60_000),
-  contractRefreshMs: numberEnv("CONTRACT_REFRESH_MS", 60_000),
-  contractLookbackHours: numberEnv("CONTRACT_LOOKBACK_HOURS", 72),
-  contractHotHours: numberEnv("CONTRACT_HOT_HOURS", 24),
-  contractHotRecheckMs: numberEnv("CONTRACT_HOT_RECHECK_MS", 5_000),
-  contractWarmRecheckMs: numberEnv("CONTRACT_WARM_RECHECK_MS", 30_000),
+  entryRef: "ASK" | "BID";
+  mexcBookSpreadPct: number;
+  anchorAgeMs: number;
+  dexDriftPct: number;
+  confirmCount: number;
+  reason: string;
+}
 
-  dexPollMs: numberEnv("DEX_POLL_MS", 2_000),
-  dexMaxPairAgeHours: numberEnv("DEX_MAX_PAIR_AGE_HOURS", 24),
-  dexQuotePriority: stringListEnv("DEX_QUOTE_PRIORITY", ["USDC", "USDT", "SOL", "ETH"]),
-  minDexBuysSellsM5: numberEnv("MIN_DEX_BUYS_SELLS_M5", 10),
+export interface PaperTrade {
+  id: string;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  status: "OPEN" | "CLOSED";
 
-  dexPreferredChains: stringListEnv("DEX_PREFERRED_CHAINS", [
-    "bsc",
-    "base",
-    "ethereum",
-    "solana",
-    "arbitrum",
-    "ton",
-    "polygon"
-  ]),
+  openedAt: string;
+  closedAt?: string;
 
-  dexMinLiquidityUsd: numberEnv("DEX_MIN_LIQUIDITY_USD", 20_000),
-  dexMinVolumeM5Usd: numberEnv("DEX_MIN_VOLUME_M5_USD", 1_000),
+  entryPrice: number;
+  exitPrice?: number;
 
-  minMexcTurnover24h: numberEnv("MIN_MEXC_TURNOVER_24H", 200_000),
-  maxMexcBookSpreadPct: numberEnv("MAX_MEXC_BOOK_SPREAD_PCT", 0.35),
-  maxDexAnchorAgeMs: numberEnv("MAX_DEX_ANCHOR_AGE_MS", 5_000),
-  maxDexDriftPct: numberEnv("MAX_DEX_DRIFT_PCT", 0.6),
+  entryRef: "ASK" | "BID";
+  exitRef?: "ASK" | "BID";
 
-  minSpreadPct: numberEnv("MIN_SPREAD_PCT", 1.2),
-  minNetEdgePct: numberEnv("MIN_NET_EDGE_PCT", 0.8),
-  assumedFeesPct: numberEnv("ASSUMED_FEES_PCT", 0.04),
-  assumedSlippagePct: numberEnv("ASSUMED_SLIPPAGE_PCT", 0.08),
+  qtyUsd: number;
+  qtyToken: number;
 
-  signalConfirmTicks: numberEnv("SIGNAL_CONFIRM_TICKS", 3),
-  signalCooldownMs: numberEnv("SIGNAL_COOLDOWN_MS", 180_000),
-  signalWindowMs: numberEnv("SIGNAL_WINDOW_MS", 30 * 60 * 1000),
-  signalMinTurnoverUsdt: numberEnv("SIGNAL_MIN_TURNOVER_USDT", 500_000),
-  signalMinMovePct: numberEnv("SIGNAL_MIN_MOVE_PCT", 1.0),
+  // Состояние депозита на момент открытия.
+  depositAtEntry: number;
 
-  paperTradeUsdSize: numberEnv("PAPER_TRADE_USD_SIZE", 100),
-  paperExitSpreadPct: numberEnv("PAPER_EXIT_SPREAD_PCT", 0.25),
-  paperStopSpreadPct: numberEnv("PAPER_STOP_SPREAD_PCT", 0.7),
-  paperMaxHoldMs: numberEnv("PAPER_MAX_HOLD_MS", 15 * 60 * 1000),
+  // Доля депозита, использованная для сделки.
+  // Например 0.3 = 30%.
+  allocationPct: number;
 
-  startupBackfillCount: numberEnv("STARTUP_BACKFILL_COUNT", 20),
-  startupBackfillLimit: numberEnv("STARTUP_BACKFILL_LIMIT", 200),
-  startupLookbackHours: numberEnv("STARTUP_LOOKBACK_HOURS", 72),
-  rollingWindowRecheckMs: numberEnv("ROLLING_WINDOW_RECHECK_MS", 30 * 60 * 1000)
-} as const;
+  // Состояние депозита после закрытия сделки.
+  depositAfterClose?: number;
+
+  dexAnchorAtEntry: number;
+  dexAnchorAtExit?: number;
+
+  entrySpreadPct: number;
+  exitSpreadPct?: number;
+
+  grossPnlPct?: number;
+  netPnlPct?: number;
+  grossPnlUsd?: number;
+  netPnlUsd?: number;
+
+  holdMs?: number;
+
+  openReason: string;
+  closeReason?: string;
+}
+
+export interface ContractWatchState {
+  symbol: string;
+  firstSeenAt: number;
+  lastCheckedAt: number | null;
+  lastMappedAt: number | null;
+  checksCount: number;
+}
+
+export interface CsvRow {
+  [key: string]: string | number | boolean | null | undefined;
+}
