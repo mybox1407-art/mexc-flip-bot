@@ -24,7 +24,7 @@ export class MexcFuturesWsClient {
 
   private readonly subscribedDeals = new Set<string>();
   private readonly subscribedDepths = new Set<string>();
-  private readonly subscribedTickers = new Set<string>(); // ← для push.ticker
+  private readonly subscribedTickers = new Set<string>();
 
   constructor(private readonly handlers: MexcWsHandlers) {}
 
@@ -56,7 +56,6 @@ export class MexcFuturesWsClient {
     this.sendSubscription("sub.depth", { symbol });
   }
 
-  // ← Подписка на push.ticker для конкретного символа
   private subscribeTicker(symbol: string): void {
     if (this.subscribedTickers.has(symbol)) {
       return;
@@ -191,20 +190,18 @@ export class MexcFuturesWsClient {
       return;
     }
 
-    // ← Подтверждение подписки на push.ticker
     if (channel === "rs.sub.ticker") {
-      const symbol = String(message.param?.symbol ?? "");
+      const param = message.param as JsonRecord | undefined;
+      const symbol = String(param?.symbol ?? "");
       logger.info({ symbol }, "MEXC push.ticker subscription confirmed");
       return;
     }
 
-    // ← Обработка push.tickers (общий поток)
     if (channel === "push.tickers" && Array.isArray(data)) {
       for (const row of data) {
         const ticker = this.toTicker(row);
 
         if (ticker) {
-          // ← Подписываемся на push.ticker для этого символа
           this.subscribeTicker(ticker.symbol);
 
           this.tickerCount++;
@@ -223,7 +220,6 @@ export class MexcFuturesWsClient {
       return;
     }
 
-    // ← Обработка push.ticker (индивидуальный поток с bid1/ask1)
     if (channel === "push.ticker" && data && !Array.isArray(data)) {
       const ticker = this.tickerFromPushTicker(data);
 
@@ -252,7 +248,6 @@ export class MexcFuturesWsClient {
       return null;
     }
 
-    // В push.tickers нет bid1/ask1, используем lastPrice
     const lastPrice = Number(row.lastPrice ?? 0);
 
     return {
@@ -268,8 +263,8 @@ export class MexcFuturesWsClient {
       minAskPrice: Number(row.minAskPrice ?? 0),
       lower24Price: Number(row.lower24Price ?? 0),
       high24Price: Number(row.high24Price ?? 0),
-      bid1: lastPrice,  // ← временно lastPrice
-      ask1: lastPrice   // ← временно lastPrice
+      bid1: lastPrice,
+      ask1: lastPrice
     };
   }
 
