@@ -226,7 +226,9 @@ export class MexcFuturesWsClient {
       maxBidPrice: Number(row.maxBidPrice ?? 0),
       minAskPrice: Number(row.minAskPrice ?? 0),
       lower24Price: Number(row.lower24Price ?? 0),
-      high24Price: Number(row.high24Price ?? 0)
+      high24Price: Number(row.high24Price ?? 0),
+      bid1: Number(row.bid1 ?? 0),
+      ask1: Number(row.ask1 ?? 0)
     };
   }
 }
