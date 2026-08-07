@@ -63,7 +63,6 @@ function normalizeSymbol(value: string): string {
 function isBlockedBaseSymbol(symbol: string): boolean {
   const upper = symbol.toUpperCase();
 
-  // Точное совпадение, а не фрагменты
   const blockedExact = [
     "USD1",
     "STOCK",
@@ -140,17 +139,14 @@ export class DexScreenerClient {
     const normalizedQuery = normalizeSymbol(query);
 
     if (!normalizedQuery || isBlockedBaseSymbol(normalizedQuery)) {
-      logger.debug({ query, normalizedQuery }, "Query blocked or empty");
       return null;
     }
 
     const url = `${this.baseUrl}/search?q=${encodeURIComponent(query)}`;
-    logger.debug({ query, url }, "Searching DEX pair");
     
     const payload = await this.fetchJsonWithRetry(url, query);
 
     if (!payload || !payload.pairs) {
-      logger.debug({ query, url }, "No pairs returned from search");
       return null;
     }
 
@@ -244,24 +240,6 @@ export class DexScreenerClient {
 
     const best = candidates[0] ?? null;
 
-    if (!best) {
-      logger.debug({ query }, "DexScreener returned no valid pairs");
-      return null;
-    }
-
-    logger.debug(
-      {
-        query,
-        chainId: best.chainId,
-        dexId: best.dexId,
-        quoteSymbol: best.quoteSymbol,
-        liquidityUsd: best.liquidityUsd.toFixed(0),
-        volumeM5: best.volumeM5.toFixed(0),
-        priceUsd: best.priceUsd.toFixed(6)
-      },
-      "DexScreener best pair selected"
-    );
-
     return best;
   }
 
@@ -269,31 +247,24 @@ export class DexScreenerClient {
     const normalizedQuery = normalizeSymbol(query);
 
     if (!normalizedQuery || isBlockedBaseSymbol(normalizedQuery)) {
-      logger.debug({ query, normalizedQuery }, "Query blocked or empty");
       return null;
     }
-
-    logger.info({ query, normalizedQuery }, "findBestPairAcrossChains called");
 
     // 1. Пробуем по основному query
     let pair = await this.findPairByQuery(query);
     if (pair) {
-      logger.info({ query, success: true }, "Found pair on first attempt");
       return pair;
     }
 
     // 2. Fallback по алиасам
     const aliases = this.getQueryAliases(query);
     for (const alias of aliases) {
-      logger.debug({ query, alias }, "Trying alias");
       pair = await this.findPairByQuery(alias);
       if (pair) {
-        logger.info({ query, alias, success: true }, "Found pair via alias");
         return pair;
       }
     }
 
-    logger.info({ query, aliases: aliases.length }, "No pair found");
     return null;
   }
 
@@ -301,12 +272,10 @@ export class DexScreenerClient {
     const base = query.toUpperCase();
     const aliases: string[] = [];
 
-    // Токены с префиксами
     if (base.startsWith("1000")) {
-      aliases.push(base.slice(4)); // 1000BONK → BONK
+      aliases.push(base.slice(4));
     }
 
-    // Обёртки
     if (base === "SOL") aliases.push("SOLANA", "WRAPPED-SOLANA");
     if (base === "BTC") aliases.push("BITCOIN", "WBTC");
     if (base === "ETH") aliases.push("ETHEREUM", "WETH");
@@ -315,7 +284,6 @@ export class DexScreenerClient {
     if (base === "AVAX") aliases.push("WAVAX");
     if (base === "FTM") aliases.push("WFTM");
 
-    // Мемы
     if (base === "PEPE") aliases.push("PEPESOLANA");
     if (base === "WIF") aliases.push("WIFSOLANA");
     if (base === "BONK") aliases.push("BONKSOLANA");
@@ -329,34 +297,19 @@ export class DexScreenerClient {
   ): Promise<DexPair | null> {
     const url = `${this.baseUrl}/pairs/${encodeURIComponent(chainId)}/${encodeURIComponent(pairAddress)}`;
     
-    logger.debug({ chainId, pairAddress }, "getPairByChainAndAddress called");
-    
     const payload = await this.fetchJsonWithRetry(url);
     
     const pair = payload?.pairs?.[0];
 
     if (!pair) {
-      logger.warn({ chainId, pairAddress }, "No pair returned from DexScreener");
       return null;
     }
 
     const priceUsd = Number(pair.priceUsd ?? 0);
 
     if (!(priceUsd > 0)) {
-      logger.warn({ chainId, pairAddress, priceUsd }, "Invalid priceUsd");
       return null;
     }
-
-    logger.debug(
-      {
-        chainId,
-        pairAddress,
-        symbol: pair.baseToken?.symbol,
-        priceUsd: priceUsd.toFixed(6),
-        liquidity: Number(pair.liquidity?.usd ?? 0).toFixed(0)
-      },
-      "DEX pair fetched successfully"
-    );
 
     return {
       chainId: (pair.chainId ?? "").toLowerCase(),
