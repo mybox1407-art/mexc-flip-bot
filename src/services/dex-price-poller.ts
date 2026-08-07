@@ -44,8 +44,6 @@ export class DexPricePoller {
 
     try {
       const mappings = this.dexMapper.getActive();
-      
-      logger.info({ count: mappings.length }, "Polling DEX prices");
 
       for (const mapping of mappings) {
         try {
@@ -77,15 +75,6 @@ export class DexPricePoller {
             );
             continue;
           }
-
-          logger.info(
-            {
-              symbol: mapping.mexcSymbol,
-              price: pair.priceUsd,
-              liquidity: pair.liquidityUsd
-            },
-            "DEX price fetched, calling onPrice"
-          );
 
           await this.onPrice(mapping.mexcSymbol, pair);
         } catch (error) {
