@@ -97,8 +97,18 @@ export class SpreadEngine {
     const mapping = this.dexMapper.get(ticker.symbol);
     const snapshotKey = mapping?.normalizedDexKey ?? normalized;
 
-    // 1. Нет active mapping — это не "no anchor", просто игнорируем
+    // 1. Нет active mapping
     if (!mapping || mapping.status !== "active") {
+      logger.debug(
+        {
+          tickerSymbol: ticker.symbol,
+          mappingStatus: mapping?.status,
+          snapshotKey,
+          mappingChainId: mapping?.chainId,
+          mappingDexPairAddress: mapping?.dexPairAddress
+        },
+        "getAnchorStatus: no active mapping, skipping"
+      );
       return null;
     }
 
@@ -106,18 +116,14 @@ export class SpreadEngine {
 
     // 2. Mapping есть, но anchor snapshot отсутствует
     if (!anchor) {
-      logger.info(
+      logger.debug(
         {
           tickerSymbol: ticker.symbol,
           snapshotKey,
           mappingDexKey: mapping.normalizedDexKey,
-          hasAnchor: false,
-          snapshotKeysCount: this.dexSnapshots.size,
-          mappingStatus: mapping.status,
-          mappingChainId: mapping.chainId,
-          mappingDexPairAddress: mapping.dexPairAddress
+          snapshotKeysCount: this.dexSnapshots.size
         },
-        "⚠️ No anchor snapshot for mapped ticker"
+        "getAnchorStatus: mapped ticker has no anchor snapshot"
       );
       return null;
     }
@@ -128,11 +134,30 @@ export class SpreadEngine {
     const mexcBid = ticker.maxBidPrice;
     const mexcAsk = ticker.minAskPrice;
 
+    // 3. Некорректные котировки MEXC
     if (!Number.isFinite(mexcBid) || !Number.isFinite(mexcAsk) || mexcBid <= 0 || mexcAsk <= 0) {
+      logger.debug(
+        {
+          tickerSymbol: ticker.symbol,
+          mexcBid,
+          mexcAsk,
+          lastPrice: ticker.lastPrice
+        },
+        "getAnchorStatus: invalid MEXC quotes, skipping"
+      );
       return null;
     }
 
+    // 4. Некорректный стакан (ask <= bid)
     if (mexcAsk <= mexcBid) {
+      logger.debug(
+        {
+          tickerSymbol: ticker.symbol,
+          mexcBid,
+          mexcAsk
+        },
+        "getAnchorStatus: invalid book spread (ask <= bid), skipping"
+      );
       return null;
     }
 
@@ -170,11 +195,19 @@ export class SpreadEngine {
 
   evaluate(ticker: MexcTicker): FlipSignal | null {
     const status = this.getAnchorStatus(ticker);
-    
+
+    // Ранний выход: нет anchor status
     if (!status) {
+      logger.debug(
+        {
+          symbol: ticker.symbol
+        },
+        "evaluate(): no anchor status, skipping"
+      );
       return null;
     }
 
+    // 5. Anchor слишком старый
     if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
       logger.warn(
         {
@@ -187,6 +220,7 @@ export class SpreadEngine {
       return null;
     }
 
+    // 6. DEX ликвидность слишком низкая
     if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) {
       logger.warn(
         {
@@ -199,6 +233,7 @@ export class SpreadEngine {
       return null;
     }
 
+    // 7. DEX объём слишком низкий
     if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) {
       logger.warn(
         {
@@ -211,6 +246,7 @@ export class SpreadEngine {
       return null;
     }
 
+    // 8. MEXC turnover слишком низкий
     if (status.mexcTurnover24h < config.minMexcTurnover24h) {
       logger.warn(
         {
@@ -223,6 +259,7 @@ export class SpreadEngine {
       return null;
     }
 
+    // 9. MEXC стакан слишком широкий
     if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) {
       logger.warn(
         {
@@ -235,6 +272,7 @@ export class SpreadEngine {
       return null;
     }
 
+    // 10. DEX дрейф слишком высокий
     if (status.dexDriftPct > config.maxDexDriftPct) {
       logger.warn(
         {
@@ -250,6 +288,7 @@ export class SpreadEngine {
     const now = Date.now();
     const state = this.getState(ticker.symbol);
 
+    // 11. Cooldown между сигналами
     if (now < state.cooldownUntil) {
       logger.warn(
         {
@@ -277,8 +316,18 @@ export class SpreadEngine {
       entryRef = "BID";
       reason = "MEXC above DEX anchor";
     } else {
+      // 12. Спред недостаточный для сигнала
       state.lastDirection = undefined;
       state.confirmCount = 0;
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          longSpreadPct: status.longSpreadPct.toFixed(3),
+          shortSpreadPct: status.shortSpreadPct.toFixed(3),
+          minSpreadPct: config.minSpreadPct
+        },
+        "evaluate(): spread below minSpreadPct, no signal"
+      );
       return null;
     }
 
@@ -289,13 +338,23 @@ export class SpreadEngine {
       state.confirmCount = 1;
     }
 
+    // 13. Недостаточно подтверждений
     if (state.confirmCount < config.signalConfirmTicks) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          confirmCount: state.confirmCount,
+          required: config.signalConfirmTicks
+        },
+        "evaluate(): not enough confirmations"
+      );
       return null;
     }
 
     const totalCostsPct = config.assumedFeesPct + config.assumedSlippagePct;
     const netEdgePct = spreadPct - totalCostsPct;
 
+    // 14. Net edge слишком низкий
     if (netEdgePct < config.minNetEdgePct) {
       logger.warn(
         {
@@ -310,6 +369,7 @@ export class SpreadEngine {
       return null;
     }
 
+    // 15. Signal cooldown
     if (now - state.lastSignalAt < config.signalCooldownMs) {
       logger.warn(
         {
