@@ -128,7 +128,10 @@ export class SpreadEngine {
         mappingDexKey: mapping?.normalizedDexKey,
         hasAnchor: !!anchor,
         snapshotKeys: Array.from(this.dexSnapshots.keys()),
-        lookingFor: snapshotKey
+        lookingFor: snapshotKey,
+        mappingStatus: mapping?.status,
+        mappingChainId: mapping?.chainId,
+        mappingDexPairAddress: mapping?.dexPairAddress
       },
       "getAnchorStatus called"
     );
