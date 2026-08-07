@@ -4,10 +4,16 @@ function requireEnv(
   name: string,
   fallback?: string
 ): string {
-  const value = process.env[name] ?? fallback;
+  const value =
+    process.env[name] ?? fallback;
 
-  if (value === undefined || value === "") {
-    throw new Error(`Missing required env: ${name}`);
+  if (
+    value === undefined ||
+    value === ""
+  ) {
+    throw new Error(
+      `Missing required env: ${name}`
+    );
   }
 
   return value;
@@ -19,7 +25,10 @@ function numberEnv(
 ): number {
   const raw = process.env[name];
 
-  if (raw === undefined || raw === "") {
+  if (
+    raw === undefined ||
+    raw === ""
+  ) {
     return fallback;
   }
 
@@ -52,17 +61,20 @@ function stringListEnv(
 
 export const config = {
   nodeEnv:
-    process.env.NODE_ENV ?? "development",
+    process.env.NODE_ENV ??
+    "development",
 
   logLevel:
-    process.env.LOG_LEVEL ?? "info",
+    process.env.LOG_LEVEL ??
+    "info",
 
   dataDir:
-    process.env.DATA_DIR ?? "data",
+    process.env.DATA_DIR ??
+    "data",
 
   mexcRestUrl: requireEnv(
     "MEXC_REST_URL",
-    "https://contract.mexc.com"
+    "https://api.mexc.com"
   ),
 
   mexcWsUrl: requireEnv(
@@ -93,17 +105,67 @@ export const config = {
 
   contractHotHours: numberEnv(
     "CONTRACT_HOT_HOURS",
-    24
+    6
   ),
 
   contractHotRecheckMs: numberEnv(
     "CONTRACT_HOT_RECHECK_MS",
-    5_000
+    1_800_000
   ),
 
   contractWarmRecheckMs: numberEnv(
     "CONTRACT_WARM_RECHECK_MS",
+    7_200_000
+  ),
+
+  startupBackfillCount: numberEnv(
+    "STARTUP_BACKFILL_COUNT",
+    20
+  ),
+
+  startupBackfillLimit: numberEnv(
+    "STARTUP_BACKFILL_LIMIT",
+    400
+  ),
+
+  startupLookbackHours: numberEnv(
+    "STARTUP_LOOKBACK_HOURS",
+    72
+  ),
+
+  rollingWindowRecheckMs: numberEnv(
+    "ROLLING_WINDOW_RECHECK_MS",
+    1_800_000
+  ),
+
+  maxTrackedNewContracts: numberEnv(
+    "MAX_TRACKED_NEW_CONTRACTS",
+    10
+  ),
+
+  signalWindowMs: numberEnv(
+    "SIGNAL_WINDOW_MS",
     30_000
+  ),
+
+  signalMinMovePct: numberEnv(
+    "SIGNAL_MIN_MOVE_PCT",
+    2
+  ),
+
+  signalMinTurnoverUsdt: numberEnv(
+    "SIGNAL_MIN_TURNOVER_USDT",
+    100_000
+  ),
+
+  signalConfirmTicks: numberEnv(
+    "SIGNAL_CONFIRM_TICKS",
+    3
+  ),
+
+  signalCooldownMs: numberEnv(
+    "SIGNAL_COOLDOWN_MS",
+    60_000
   ),
 
   dexPollMs: numberEnv(
@@ -113,17 +175,19 @@ export const config = {
 
   dexMaxPairAgeHours: numberEnv(
     "DEX_MAX_PAIR_AGE_HOURS",
-    24
+    7_200
   ),
 
   dexQuotePriority: stringListEnv(
     "DEX_QUOTE_PRIORITY",
-    ["USDC", "USDT", "SOL", "ETH"]
-  ),
-
-  minDexBuysSellsM5: numberEnv(
-    "MIN_DEX_BUYS_SELLS_M5",
-    10
+    [
+      "USDT",
+      "USDC",
+      "WETH",
+      "WBNB",
+      "SOL",
+      "TON"
+    ]
   ),
 
   dexPreferredChains: stringListEnv(
@@ -149,9 +213,14 @@ export const config = {
     1_000
   ),
 
+  minDexBuysSellsM5: numberEnv(
+    "MIN_DEX_BUYS_SELLS_M5",
+    5
+  ),
+
   minMexcTurnover24h: numberEnv(
     "MIN_MEXC_TURNOVER_24H",
-    200_000
+    250_000
   ),
 
   maxMexcBookSpreadPct: numberEnv(
@@ -169,6 +238,11 @@ export const config = {
     0.6
   ),
 
+  maxPriceDeviationPct: numberEnv(
+    "MAX_PRICE_DEVIATION_PCT",
+    35
+  ),
+
   minSpreadPct: numberEnv(
     "MIN_SPREAD_PCT",
     1.2
@@ -176,9 +250,15 @@ export const config = {
 
   minNetEdgePct: numberEnv(
     "MIN_NET_EDGE_PCT",
-    0.8
+    0.35
   ),
 
+  roundTripCostPct: numberEnv(
+    "ROUND_TRIP_COST_PCT",
+    0.12
+  ),
+
+  // Оставлены для обратной совместимости.
   assumedFeesPct: numberEnv(
     "ASSUMED_FEES_PCT",
     0.064
@@ -214,31 +294,6 @@ export const config = {
     0.02
   ),
 
-  signalConfirmTicks: numberEnv(
-    "SIGNAL_CONFIRM_TICKS",
-    3
-  ),
-
-  signalCooldownMs: numberEnv(
-    "SIGNAL_COOLDOWN_MS",
-    180_000
-  ),
-
-  signalWindowMs: numberEnv(
-    "SIGNAL_WINDOW_MS",
-    30 * 60 * 1000
-  ),
-
-  signalMinTurnoverUsdt: numberEnv(
-    "SIGNAL_MIN_TURNOVER_USDT",
-    500_000
-  ),
-
-  signalMinMovePct: numberEnv(
-    "SIGNAL_MIN_MOVE_PCT",
-    1.0
-  ),
-
   paperTradeUsdSize: numberEnv(
     "PAPER_TRADE_USD_SIZE",
     100
@@ -261,41 +316,24 @@ export const config = {
 
   paperMaxHoldMs: numberEnv(
     "PAPER_MAX_HOLD_MS",
-    15 * 60 * 1000
+    900_000
   ),
 
-  paperMaxAnchorMoveAgainstPct: numberEnv(
-    "PAPER_MAX_ANCHOR_MOVE_AGAINST_PCT",
-    1.0
-  ),
+  paperMaxAnchorMoveAgainstPct:
+    numberEnv(
+      "PAPER_MAX_ANCHOR_MOVE_AGAINST_PCT",
+      1.0
+    ),
 
-  paperMaxDexPriceImpactPct: numberEnv(
-    "PAPER_MAX_DEX_PRICE_IMPACT_PCT",
-    2.0
-  ),
+  paperMaxDexPriceImpactPct:
+    numberEnv(
+      "PAPER_MAX_DEX_PRICE_IMPACT_PCT",
+      2.0
+    ),
 
-  paperMaxLiquidityDropPct: numberEnv(
-    "PAPER_MAX_LIQUIDITY_DROP_PCT",
-    50
-  ),
-
-  startupBackfillCount: numberEnv(
-    "STARTUP_BACKFILL_COUNT",
-    20
-  ),
-
-  startupBackfillLimit: numberEnv(
-    "STARTUP_BACKFILL_LIMIT",
-    200
-  ),
-
-  startupLookbackHours: numberEnv(
-    "STARTUP_LOOKBACK_HOURS",
-    72
-  ),
-
-  rollingWindowRecheckMs: numberEnv(
-    "ROLLING_WINDOW_RECHECK_MS",
-    30 * 60 * 1000
-  )
+  paperMaxLiquidityDropPct:
+    numberEnv(
+      "PAPER_MAX_LIQUIDITY_DROP_PCT",
+      50
+    )
 } as const;
