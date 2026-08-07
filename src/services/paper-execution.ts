@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+
 import type {
   PaperTrade,
   FlipSignal,
   MexcTicker
 } from "../types.js";
+
 import type {
   AnchorStatus
 } from "./spread-engine.js";
@@ -41,7 +43,22 @@ export class PaperExecutionService {
     PaperTrade
   >();
 
-  onSignal(signal: FlipSignal): PaperAction | null {
+  private readonly maxOpenTrades = 3;
+  private readonly tradeAllocationPct = 0.3;
+
+  private depositUsd = 100;
+
+  getDepositUsd(): number {
+    return round(this.depositUsd, 4);
+  }
+
+  getOpenTradesCount(): number {
+    return this.openTrades.size;
+  }
+
+  onSignal(
+    signal: FlipSignal
+  ): PaperAction | null {
     const positionKey = normalizeSymbol(
       signal.symbol
     );
@@ -54,12 +71,47 @@ export class PaperExecutionService {
         {
           symbol: signal.symbol,
           positionKey,
-          existingDirection: existing.direction,
-          existingEntryPrice: existing.entryPrice,
+          existingDirection:
+            existing.direction,
+          existingEntryPrice:
+            existing.entryPrice,
           newDirection: signal.direction,
-          newSpreadPct: signal.spreadPct
+          newSpreadPct: signal.spreadPct,
+          depositUsd: this.depositUsd
         },
         "Signal skipped: position already open"
+      );
+
+      return null;
+    }
+
+    if (
+      this.openTrades.size >=
+      this.maxOpenTrades
+    ) {
+      logger.debug(
+        {
+          symbol: signal.symbol,
+          openTrades: this.openTrades.size,
+          maxOpenTrades: this.maxOpenTrades,
+          depositUsd: this.depositUsd
+        },
+        "Signal skipped: maximum open trades reached"
+      );
+
+      return null;
+    }
+
+    if (
+      !Number.isFinite(this.depositUsd) ||
+      this.depositUsd <= 0
+    ) {
+      logger.warn(
+        {
+          symbol: signal.symbol,
+          depositUsd: this.depositUsd
+        },
+        "Signal skipped: deposit is empty"
       );
 
       return null;
@@ -86,16 +138,28 @@ export class PaperExecutionService {
       return null;
     }
 
-    const qtyUsd = config.paperTradeUsdSize;
-    const qtyToken = qtyUsd / entryPrice;
+    const depositAtEntry =
+      this.depositUsd;
+
+    const qtyUsd =
+      depositAtEntry *
+      this.tradeAllocationPct;
+
+    const qtyToken =
+      qtyUsd / entryPrice;
 
     if (
+      !Number.isFinite(qtyUsd) ||
+      qtyUsd <= 0 ||
       !Number.isFinite(qtyToken) ||
       qtyToken <= 0
     ) {
       logger.warn(
         {
           symbol: signal.symbol,
+          depositUsd: depositAtEntry,
+          allocationPct:
+            this.tradeAllocationPct,
           qtyUsd,
           entryPrice,
           qtyToken
@@ -111,8 +175,13 @@ export class PaperExecutionService {
         symbol: signal.symbol,
         direction: signal.direction,
         entryPrice: entryPrice.toFixed(6),
+        depositAtEntry,
+        allocationPct:
+          this.tradeAllocationPct,
         qtyUsd,
         qtyToken: qtyToken.toFixed(8),
+        openTrades: this.openTrades.size,
+        maxOpenTrades: this.maxOpenTrades,
         spreadPct: signal.spreadPct.toFixed(3),
         netEdgePct: signal.netEdgePct.toFixed(3),
         dexPrice: signal.dexPrice.toFixed(6),
@@ -128,23 +197,43 @@ export class PaperExecutionService {
       symbol: signal.symbol,
       direction: signal.direction,
       status: "OPEN",
+
       openedAt: new Date().toISOString(),
+
       entryPrice: round(entryPrice),
+
       entryRef:
         signal.direction === "LONG"
           ? "ASK"
           : "BID",
+
       qtyUsd: round(qtyUsd, 2),
       qtyToken: round(qtyToken, 8),
-      dexAnchorAtEntry: round(signal.dexPrice),
+
+      depositAtEntry: round(
+        depositAtEntry,
+        4
+      ),
+
+      allocationPct:
+        this.tradeAllocationPct,
+
+      dexAnchorAtEntry: round(
+        signal.dexPrice
+      ),
+
       entrySpreadPct: round(
         signal.spreadPct,
         4
       ),
+
       openReason: signal.reason
     };
 
-    this.openTrades.set(positionKey, trade);
+    this.openTrades.set(
+      positionKey,
+      trade
+    );
 
     logger.warn(
       {
@@ -154,7 +243,13 @@ export class PaperExecutionService {
         entryPrice: trade.entryPrice,
         qtyUsd: trade.qtyUsd,
         qtyToken: trade.qtyToken,
-        entrySpreadPct: trade.entrySpreadPct
+        depositAtEntry:
+          trade.depositAtEntry,
+        allocationPct:
+          trade.allocationPct,
+        openTrades: this.openTrades.size,
+        entrySpreadPct:
+          trade.entrySpreadPct
       },
       "PAPER TRADE OPENED"
     );
@@ -185,7 +280,8 @@ export class PaperExecutionService {
         {
           symbol: ticker.symbol,
           tradeDirection: trade.direction,
-          entryPrice: trade.entryPrice
+          entryPrice: trade.entryPrice,
+          depositUsd: this.depositUsd
         },
         "Trade check skipped: no DEX anchor"
       );
@@ -194,6 +290,7 @@ export class PaperExecutionService {
     }
 
     const now = Date.now();
+
     const openedAt =
       new Date(trade.openedAt).getTime();
 
@@ -211,7 +308,9 @@ export class PaperExecutionService {
         ? anchor.longSpreadPct
         : anchor.shortSpreadPct;
 
-    if (!Number.isFinite(spreadPct)) {
+    if (
+      !Number.isFinite(spreadPct)
+    ) {
       logger.warn(
         {
           symbol: ticker.symbol,
@@ -224,19 +323,29 @@ export class PaperExecutionService {
       return null;
     }
 
+    const currentPrice =
+      Number(ticker.lastPrice);
+
     logger.debug(
       {
         symbol: ticker.symbol,
         direction: trade.direction,
         entryPrice: trade.entryPrice,
-        currentPrice: ticker.lastPrice.toFixed(6),
+        currentPrice: Number.isFinite(
+          currentPrice
+        )
+          ? currentPrice.toFixed(6)
+          : "invalid",
         spreadPct: spreadPct.toFixed(3),
         holdSec,
-        exitThreshold: config.paperExitSpreadPct,
-        stopThreshold: config.paperStopSpreadPct,
+        exitThreshold:
+          config.paperExitSpreadPct,
+        stopThreshold:
+          config.paperStopSpreadPct,
         maxHoldSec: Math.floor(
           config.paperMaxHoldMs / 1000
-        )
+        ),
+        depositUsd: this.depositUsd
       },
       "Checking open position"
     );
@@ -245,12 +354,14 @@ export class PaperExecutionService {
     let closeReason = "";
 
     if (
-      spreadPct <= config.paperExitSpreadPct
+      spreadPct <=
+      config.paperExitSpreadPct
     ) {
       shouldClose = true;
       closeReason = "mean_reverted";
     } else if (
-      spreadPct <= -config.paperStopSpreadPct
+      spreadPct <=
+      -config.paperStopSpreadPct
     ) {
       shouldClose = true;
       closeReason = "stop_loss";
@@ -297,18 +408,52 @@ export class PaperExecutionService {
             trade.entryPrice
           ) * 100;
 
+    // Здесь учитываются только расходы MEXC.
+    // DEX используется только как reference price.
     const totalCostsPct =
       config.assumedFeesPct +
       config.assumedSlippagePct;
 
     const netPnlPct =
-      grossPnlPct - totalCostsPct;
+      grossPnlPct -
+      totalCostsPct;
 
     const grossPnlUsd =
-      (trade.qtyUsd * grossPnlPct) / 100;
+      (trade.qtyUsd * grossPnlPct) /
+      100;
 
     const netPnlUsd =
-      (trade.qtyUsd * netPnlPct) / 100;
+      (trade.qtyUsd * netPnlPct) /
+      100;
+
+    if (
+      !Number.isFinite(netPnlUsd)
+    ) {
+      logger.error(
+        {
+          tradeId: trade.id,
+          symbol: trade.symbol,
+          grossPnlPct,
+          netPnlPct,
+          grossPnlUsd,
+          netPnlUsd
+        },
+        "Invalid paper PnL"
+      );
+
+      return null;
+    }
+
+    const depositBeforeClose =
+      this.depositUsd;
+
+    const depositAfterClose = Math.max(
+      0,
+      round(
+        depositBeforeClose + netPnlUsd,
+        4
+      )
+    );
 
     logger.warn(
       {
@@ -321,6 +466,8 @@ export class PaperExecutionService {
         netPnlPct: netPnlPct.toFixed(4),
         grossPnlUsd: grossPnlUsd.toFixed(4),
         netPnlUsd: netPnlUsd.toFixed(4),
+        depositBeforeClose,
+        depositAfterClose,
         holdSec,
         closeReason,
         entrySpreadPct: trade.entrySpreadPct,
@@ -331,39 +478,60 @@ export class PaperExecutionService {
 
     const closedTrade: PaperTrade = {
       ...trade,
+
       status: "CLOSED",
+
       closedAt: new Date(now).toISOString(),
+
       exitPrice: round(exitPrice),
+
       exitRef:
         trade.direction === "LONG"
           ? "BID"
           : "ASK",
-      dexAnchorAtExit: round(anchor.dexPrice),
+
+      dexAnchorAtExit: round(
+        anchor.dexPrice
+      ),
+
       exitSpreadPct: round(
         spreadPct,
         4
       ),
+
       grossPnlPct: round(
         grossPnlPct,
         4
       ),
+
       netPnlPct: round(
         netPnlPct,
         4
       ),
+
       grossPnlUsd: round(
         grossPnlUsd,
         4
       ),
+
       netPnlUsd: round(
         netPnlUsd,
         4
       ),
+
+      depositAfterClose,
+
       holdMs,
       closeReason
     };
 
-    this.openTrades.delete(positionKey);
+    // Депозит изменяется только после закрытия сделки.
+    this.depositUsd =
+      depositAfterClose;
+
+    this.openTrades.delete(
+      positionKey
+    );
 
     logger.warn(
       {
@@ -372,8 +540,19 @@ export class PaperExecutionService {
         direction: closedTrade.direction,
         entryPrice: closedTrade.entryPrice,
         exitPrice: closedTrade.exitPrice,
-        netPnlPct: closedTrade.netPnlPct?.toFixed(4),
-        netPnlUsd: closedTrade.netPnlUsd?.toFixed(4),
+        grossPnlPct:
+          closedTrade.grossPnlPct?.toFixed(4),
+        netPnlPct:
+          closedTrade.netPnlPct?.toFixed(4),
+        grossPnlUsd:
+          closedTrade.grossPnlUsd?.toFixed(4),
+        netPnlUsd:
+          closedTrade.netPnlUsd?.toFixed(4),
+        depositAtEntry:
+          closedTrade.depositAtEntry,
+        depositAfterClose:
+          closedTrade.depositAfterClose,
+        openTrades: this.openTrades.size,
         holdSec,
         closeReason: closedTrade.closeReason
       },
