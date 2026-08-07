@@ -80,7 +80,7 @@ export class SpreadEngine {
     const cutoff = now - 30_000;
     state.dexHistory = state.dexHistory.filter((point) => point.ts >= cutoff);
 
-    logger.info(
+    logger.debug(
       {
         symbol,
         snapshotKey,
