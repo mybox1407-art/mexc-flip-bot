@@ -116,23 +116,43 @@ export class SpreadEngine {
 
     // 2. Mapping есть, но anchor snapshot отсутствует
     if (!anchor) {
-      logger.debug(
-        {
-          tickerSymbol: ticker.symbol,
-          snapshotKey,
-          mappingDexKey: mapping.normalizedDexKey,
-          snapshotKeysCount: this.dexSnapshots.size
-        },
-        "getAnchorStatus: mapped ticker has no anchor snapshot"
-      );
+      // Проверяем возраст mapping
+      const mappingAgeMs = mapping.updatedAt
+        ? Date.now() - new Date(mapping.updatedAt).getTime()
+        : Infinity;
+
+      // Если mapping свежий (< 30 секунд), считаем это нормальным и не шумим
+      if (mappingAgeMs < 30_000) {
+        logger.debug(
+          {
+            tickerSymbol: ticker.symbol,
+            snapshotKey,
+            mappingDexKey: mapping.normalizedDexKey,
+            snapshotKeysCount: this.dexSnapshots.size,
+            mappingAgeMs
+          },
+          "getAnchorStatus: mapped ticker has no anchor snapshot yet (mapping is fresh)"
+        );
+      } else {
+        logger.info(
+          {
+            tickerSymbol: ticker.symbol,
+            snapshotKey,
+            mappingDexKey: mapping.normalizedDexKey,
+            snapshotKeysCount: this.dexSnapshots.size,
+            mappingAgeMs
+          },
+          "getAnchorStatus: mapped ticker has no anchor snapshot (mapping is old)"
+        );
+      }
       return null;
     }
 
     const now = Date.now();
     const anchorAgeMs = now - anchor.updatedAt;
 
-    const mexcBid = ticker.maxBidPrice;
-    const mexcAsk = ticker.minAskPrice;
+    let mexcBid = ticker.maxBidPrice;
+    let mexcAsk = ticker.minAskPrice;
 
     // 3. Некорректные котировки MEXC
     if (!Number.isFinite(mexcBid) || !Number.isFinite(mexcAsk) || mexcBid <= 0 || mexcAsk <= 0) {
@@ -148,17 +168,20 @@ export class SpreadEngine {
       return null;
     }
 
-    // 4. Некорректный стакан (ask <= bid)
+    // 4. Нормализация стакана: если ask <= bid, меняем их местами
     if (mexcAsk <= mexcBid) {
+      const tmp = mexcBid;
+      mexcBid = mexcAsk;
+      mexcAsk = tmp;
+
       logger.debug(
         {
           tickerSymbol: ticker.symbol,
           mexcBid,
           mexcAsk
         },
-        "getAnchorStatus: invalid book spread (ask <= bid), skipping"
+        "getAnchorStatus: swapped bid/ask (original data had ask <= bid)"
       );
-      return null;
     }
 
     const mexcMid = (mexcBid + mexcAsk) / 2;
