@@ -1,8 +1,14 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
-import type { PaperTrade, FlipSignal, MexcTicker } from "../types.js";
-import type { AnchorStatus } from "./spread-engine.js";
+import type {
+  PaperTrade,
+  FlipSignal,
+  MexcTicker
+} from "../types.js";
+import type {
+  AnchorStatus
+} from "./spread-engine.js";
 
 type PaperAction =
   | {
@@ -14,21 +20,40 @@ type PaperAction =
       trade: PaperTrade;
     };
 
-function round(value: number, digits = 6): number {
+function normalizeSymbol(value: string): string {
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[_\-\/\s]/g, "");
+}
+
+function round(
+  value: number,
+  digits = 6
+): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
 }
 
 export class PaperExecutionService {
-  private readonly openTrades = new Map<string, PaperTrade>();
+  private readonly openTrades = new Map<
+    string,
+    PaperTrade
+  >();
 
   onSignal(signal: FlipSignal): PaperAction | null {
-    // Проверка: уже есть позиция
-    if (this.openTrades.has(signal.symbol)) {
-      const existing = this.openTrades.get(signal.symbol)!;
+    const positionKey = normalizeSymbol(
+      signal.symbol
+    );
+
+    const existing =
+      this.openTrades.get(positionKey);
+
+    if (existing) {
       logger.debug(
         {
           symbol: signal.symbol,
+          positionKey,
           existingDirection: existing.direction,
           existingEntryPrice: existing.entryPrice,
           newDirection: signal.direction,
@@ -36,19 +61,57 @@ export class PaperExecutionService {
         },
         "Signal skipped: position already open"
       );
+
       return null;
     }
 
-    const entryPrice = signal.direction === "LONG" ? signal.mexcAsk : signal.mexcBid;
+    const entryPrice =
+      signal.direction === "LONG"
+        ? signal.mexcAsk
+        : signal.mexcBid;
+
+    if (
+      !Number.isFinite(entryPrice) ||
+      entryPrice <= 0
+    ) {
+      logger.warn(
+        {
+          symbol: signal.symbol,
+          direction: signal.direction,
+          entryPrice
+        },
+        "Invalid paper entry price"
+      );
+
+      return null;
+    }
+
     const qtyUsd = config.paperTradeUsdSize;
     const qtyToken = qtyUsd / entryPrice;
+
+    if (
+      !Number.isFinite(qtyToken) ||
+      qtyToken <= 0
+    ) {
+      logger.warn(
+        {
+          symbol: signal.symbol,
+          qtyUsd,
+          entryPrice,
+          qtyToken
+        },
+        "Invalid paper position size"
+      );
+
+      return null;
+    }
 
     logger.info(
       {
         symbol: signal.symbol,
         direction: signal.direction,
         entryPrice: entryPrice.toFixed(6),
-        qtyUsd: qtyUsd,
+        qtyUsd,
         qtyToken: qtyToken.toFixed(8),
         spreadPct: signal.spreadPct.toFixed(3),
         netEdgePct: signal.netEdgePct.toFixed(3),
@@ -67,15 +130,21 @@ export class PaperExecutionService {
       status: "OPEN",
       openedAt: new Date().toISOString(),
       entryPrice: round(entryPrice),
-      entryRef: signal.direction === "LONG" ? "ASK" : "BID",
+      entryRef:
+        signal.direction === "LONG"
+          ? "ASK"
+          : "BID",
       qtyUsd: round(qtyUsd, 2),
       qtyToken: round(qtyToken, 8),
       dexAnchorAtEntry: round(signal.dexPrice),
-      entrySpreadPct: round(signal.spreadPct, 4),
+      entrySpreadPct: round(
+        signal.spreadPct,
+        4
+      ),
       openReason: signal.reason
     };
 
-    this.openTrades.set(signal.symbol, trade);
+    this.openTrades.set(positionKey, trade);
 
     logger.warn(
       {
@@ -96,9 +165,17 @@ export class PaperExecutionService {
     };
   }
 
-  onTicker(ticker: MexcTicker, anchor: AnchorStatus | null): PaperAction | null {
-    const trade = this.openTrades.get(ticker.symbol);
-    
+  onTicker(
+    ticker: MexcTicker,
+    anchor: AnchorStatus | null
+  ): PaperAction | null {
+    const positionKey = normalizeSymbol(
+      ticker.symbol
+    );
+
+    const trade =
+      this.openTrades.get(positionKey);
+
     if (!trade) {
       return null;
     }
@@ -112,16 +189,40 @@ export class PaperExecutionService {
         },
         "Trade check skipped: no DEX anchor"
       );
+
       return null;
     }
 
     const now = Date.now();
-    const openedAt = new Date(trade.openedAt).getTime();
-    const holdMs = now - openedAt;
-    const holdSec = Math.floor(holdMs / 1000);
+    const openedAt =
+      new Date(trade.openedAt).getTime();
+
+    const holdMs = Math.max(
+      0,
+      now - openedAt
+    );
+
+    const holdSec = Math.floor(
+      holdMs / 1000
+    );
 
     const spreadPct =
-      trade.direction === "LONG" ? anchor.longSpreadPct : anchor.shortSpreadPct;
+      trade.direction === "LONG"
+        ? anchor.longSpreadPct
+        : anchor.shortSpreadPct;
+
+    if (!Number.isFinite(spreadPct)) {
+      logger.warn(
+        {
+          symbol: ticker.symbol,
+          tradeId: trade.id,
+          spreadPct
+        },
+        "Invalid exit spread"
+      );
+
+      return null;
+    }
 
     logger.debug(
       {
@@ -130,10 +231,12 @@ export class PaperExecutionService {
         entryPrice: trade.entryPrice,
         currentPrice: ticker.lastPrice.toFixed(6),
         spreadPct: spreadPct.toFixed(3),
-        holdSec: holdSec,
+        holdSec,
         exitThreshold: config.paperExitSpreadPct,
         stopThreshold: config.paperStopSpreadPct,
-        maxHoldSec: Math.floor(config.paperMaxHoldMs / 1000)
+        maxHoldSec: Math.floor(
+          config.paperMaxHoldMs / 1000
+        )
       },
       "Checking open position"
     );
@@ -141,13 +244,19 @@ export class PaperExecutionService {
     let shouldClose = false;
     let closeReason = "";
 
-    if (spreadPct <= config.paperExitSpreadPct) {
+    if (
+      spreadPct <= config.paperExitSpreadPct
+    ) {
       shouldClose = true;
       closeReason = "mean_reverted";
-    } else if (spreadPct <= -config.paperStopSpreadPct) {
+    } else if (
+      spreadPct <= -config.paperStopSpreadPct
+    ) {
       shouldClose = true;
       closeReason = "stop_loss";
-    } else if (holdMs >= config.paperMaxHoldMs) {
+    } else if (
+      holdMs >= config.paperMaxHoldMs
+    ) {
       shouldClose = true;
       closeReason = "timeout";
     }
@@ -156,17 +265,50 @@ export class PaperExecutionService {
       return null;
     }
 
-    const exitPrice = trade.direction === "LONG" ? anchor.mexcBid : anchor.mexcAsk;
+    const exitPrice =
+      trade.direction === "LONG"
+        ? anchor.mexcBid
+        : anchor.mexcAsk;
+
+    if (
+      !Number.isFinite(exitPrice) ||
+      exitPrice <= 0
+    ) {
+      logger.warn(
+        {
+          symbol: ticker.symbol,
+          tradeId: trade.id,
+          exitPrice
+        },
+        "Invalid paper exit price"
+      );
+
+      return null;
+    }
+
     const grossPnlPct =
       trade.direction === "LONG"
-        ? ((exitPrice - trade.entryPrice) / trade.entryPrice) * 100
-        : ((trade.entryPrice - exitPrice) / trade.entryPrice) * 100;
+        ? (
+            (exitPrice - trade.entryPrice) /
+            trade.entryPrice
+          ) * 100
+        : (
+            (trade.entryPrice - exitPrice) /
+            trade.entryPrice
+          ) * 100;
 
-    const totalCostsPct = config.assumedFeesPct + config.assumedSlippagePct;
-    const netPnlPct = grossPnlPct - totalCostsPct;
+    const totalCostsPct =
+      config.assumedFeesPct +
+      config.assumedSlippagePct;
 
-    const grossPnlUsd = (trade.qtyUsd * grossPnlPct) / 100;
-    const netPnlUsd = (trade.qtyUsd * netPnlPct) / 100;
+    const netPnlPct =
+      grossPnlPct - totalCostsPct;
+
+    const grossPnlUsd =
+      (trade.qtyUsd * grossPnlPct) / 100;
+
+    const netPnlUsd =
+      (trade.qtyUsd * netPnlPct) / 100;
 
     logger.warn(
       {
@@ -179,7 +321,7 @@ export class PaperExecutionService {
         netPnlPct: netPnlPct.toFixed(4),
         grossPnlUsd: grossPnlUsd.toFixed(4),
         netPnlUsd: netPnlUsd.toFixed(4),
-        holdSec: holdSec,
+        holdSec,
         closeReason,
         entrySpreadPct: trade.entrySpreadPct,
         exitSpreadPct: spreadPct.toFixed(3)
@@ -192,18 +334,36 @@ export class PaperExecutionService {
       status: "CLOSED",
       closedAt: new Date(now).toISOString(),
       exitPrice: round(exitPrice),
-      exitRef: trade.direction === "LONG" ? "BID" : "ASK",
+      exitRef:
+        trade.direction === "LONG"
+          ? "BID"
+          : "ASK",
       dexAnchorAtExit: round(anchor.dexPrice),
-      exitSpreadPct: round(spreadPct, 4),
-      grossPnlPct: round(grossPnlPct, 4),
-      netPnlPct: round(netPnlPct, 4),
-      grossPnlUsd: round(grossPnlUsd, 4),
-      netPnlUsd: round(netPnlUsd, 4),
+      exitSpreadPct: round(
+        spreadPct,
+        4
+      ),
+      grossPnlPct: round(
+        grossPnlPct,
+        4
+      ),
+      netPnlPct: round(
+        netPnlPct,
+        4
+      ),
+      grossPnlUsd: round(
+        grossPnlUsd,
+        4
+      ),
+      netPnlUsd: round(
+        netPnlUsd,
+        4
+      ),
       holdMs,
       closeReason
     };
 
-    this.openTrades.delete(ticker.symbol);
+    this.openTrades.delete(positionKey);
 
     logger.warn(
       {
@@ -212,9 +372,9 @@ export class PaperExecutionService {
         direction: closedTrade.direction,
         entryPrice: closedTrade.entryPrice,
         exitPrice: closedTrade.exitPrice,
-        netPnlPct: closedTrade.netPnlPct!.toFixed(4),  // ← Добавь !
-        netPnlUsd: closedTrade.netPnlUsd!.toFixed(4),  // ← Добавь !
-        holdSec: holdSec,
+        netPnlPct: closedTrade.netPnlPct?.toFixed(4),
+        netPnlUsd: closedTrade.netPnlUsd?.toFixed(4),
+        holdSec,
         closeReason: closedTrade.closeReason
       },
       "PAPER TRADE CLOSED"
