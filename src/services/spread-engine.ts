@@ -53,6 +53,19 @@ function round(value: number, digits = 3): number {
   return Math.round(value * factor) / factor;
 }
 
+// <<< NEW: вспомогательная функция для проверки адекватности DEX‑якоря
+function isValidDexAnchor(dexPrice: number, mexcPrice: number): boolean {
+  if (!Number.isFinite(dexPrice) || dexPrice <= 0) return false;
+  if (!Number.isFinite(mexcPrice) || mexcPrice <= 0) return false;
+
+  const ratio = Math.max(dexPrice, mexcPrice) / Math.min(dexPrice, mexcPrice);
+
+  // Цены не должны отличаться более чем в 2 раза (можно настроить)
+  if (ratio > 2) return false;
+
+  return true;
+}
+
 export class SpreadEngine {
   private readonly dexSnapshots = new Map<string, DexSnapshot>();
   private readonly states = new Map<string, SymbolState>();
@@ -116,12 +129,10 @@ export class SpreadEngine {
 
     // 2. Mapping есть, но anchor snapshot отсутствует
     if (!anchor) {
-      // Проверяем возраст mapping через mappedAt
       const mappingAgeMs = mapping.mappedAt
         ? Date.now() - new Date(mapping.mappedAt).getTime()
         : Infinity;
 
-      // Если mapping свежий (< 30 секунд), считаем это нормальным и не шумим
       if (mappingAgeMs < 30_000) {
         logger.debug(
           {
@@ -151,7 +162,6 @@ export class SpreadEngine {
     const now = Date.now();
     const anchorAgeMs = now - anchor.updatedAt;
 
-    // ✅ ИСПРАВЛЕНО: используем bid1/ask1 вместо maxBidPrice/minAskPrice
     let mexcBid = (ticker as any).bid1;
     let mexcAsk = (ticker as any).ask1;
 
@@ -169,7 +179,7 @@ export class SpreadEngine {
       return null;
     }
 
-    // 4. Нормализация стакана: если ask <= bid, меняем их местами
+    // 4. Нормализация стакана
     if (mexcAsk <= mexcBid) {
       const tmp = mexcBid;
       mexcBid = mexcAsk;
@@ -194,9 +204,28 @@ export class SpreadEngine {
     const longSpreadPct = ((anchor.priceUsd - mexcAsk) / mexcAsk) * 100;
     const shortSpreadPct = ((mexcBid - anchor.priceUsd) / mexcBid) * 100;
 
+    // <<< NEW: проверка адекватности DEX‑якоря (price ratio)
+    const dexPrice = anchor.priceUsd;
+    const mexcPrice = mexcMid;
+
+    if (!isValidDexAnchor(dexPrice, mexcPrice)) {
+      const ratio = Math.max(dexPrice, mexcPrice) / Math.min(dexPrice, mexcPrice);
+      logger.warn(
+        {
+          symbol: ticker.symbol,
+          dexPrice,
+          mexcPrice,
+          priceRatio: ratio,
+          reason: "DEX/MEXC price ratio too high"
+        },
+        "❌ Invalid DEX anchor (price ratio)"
+      );
+      return null;
+    }
+
     return {
       symbol: ticker.symbol,
-      dexPrice: anchor.priceUsd,
+      dexPrice,
       dexLiquidityUsd: anchor.liquidityUsd,
       dexVolumeM5: anchor.volumeM5,
       dexBuysM5: anchor.buysM5,
@@ -220,7 +249,6 @@ export class SpreadEngine {
   evaluate(ticker: MexcTicker): FlipSignal | null {
     const status = this.getAnchorStatus(ticker);
 
-    // Ранний выход: нет anchor status
     if (!status) {
       logger.debug(
         {
@@ -231,7 +259,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // 5. Anchor слишком старый
     if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
       logger.warn(
         {
@@ -244,7 +271,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // 6. DEX ликвидность слишком низкая
     if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) {
       logger.warn(
         {
@@ -257,7 +283,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // 7. DEX объём слишком низкий
     if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) {
       logger.warn(
         {
@@ -270,7 +295,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // 8. MEXC turnover слишком низкий
     if (status.mexcTurnover24h < config.minMexcTurnover24h) {
       logger.warn(
         {
@@ -283,7 +307,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // 9. MEXC стакан слишком широкий
     if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) {
       logger.warn(
         {
@@ -296,13 +319,12 @@ export class SpreadEngine {
       return null;
     }
 
-    // 10. DEX дрейф слишком высокий
     if (status.dexDriftPct > config.maxDexDriftPct) {
       logger.warn(
         {
           symbol: ticker.symbol,
           driftPct: status.dexDriftPct.toFixed(3),
-          maxDriftPct: config.maxDexDriftPct
+          maxDriftPct: config.maxDriftPct
         },
         "❌ DEX drift too high"
       );
@@ -312,7 +334,6 @@ export class SpreadEngine {
     const now = Date.now();
     const state = this.getState(ticker.symbol);
 
-    // 11. Cooldown между сигналами
     if (now < state.cooldownUntil) {
       logger.warn(
         {
@@ -340,7 +361,6 @@ export class SpreadEngine {
       entryRef = "BID";
       reason = "MEXC above DEX anchor";
     } else {
-      // 12. Спред недостаточный для сигнала
       state.lastDirection = undefined;
       state.confirmCount = 0;
       logger.debug(
@@ -362,7 +382,6 @@ export class SpreadEngine {
       state.confirmCount = 1;
     }
 
-    // 13. Недостаточно подтверждений
     if (state.confirmCount < config.signalConfirmTicks) {
       logger.debug(
         {
@@ -378,7 +397,6 @@ export class SpreadEngine {
     const totalCostsPct = config.assumedFeesPct + config.assumedSlippagePct;
     const netEdgePct = spreadPct - totalCostsPct;
 
-    // 14. Net edge слишком низкий
     if (netEdgePct < config.minNetEdgePct) {
       logger.warn(
         {
@@ -393,7 +411,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // 15. Signal cooldown
     if (now - state.lastSignalAt < config.signalCooldownMs) {
       logger.warn(
         {
