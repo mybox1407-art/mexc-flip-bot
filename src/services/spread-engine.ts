@@ -152,8 +152,8 @@ export class SpreadEngine {
     const anchorAgeMs = now - anchor.updatedAt;
 
     // ✅ ИСПРАВЛЕНО: используем bid1/ask1 вместо maxBidPrice/minAskPrice
-    let mexcBid = ticker.bid1;
-    let mexcAsk = ticker.ask1;
+    let mexcBid = (ticker as any).bid1;
+    let mexcAsk = (ticker as any).ask1;
 
     // 3. Некорректные котировки MEXC
     if (!Number.isFinite(mexcBid) || !Number.isFinite(mexcAsk) || mexcBid <= 0 || mexcAsk <= 0) {
