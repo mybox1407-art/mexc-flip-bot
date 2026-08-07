@@ -1,3 +1,4 @@
+cd mexc-flip-bot
 docker compose down
 cd ~
 rm -rf mexc-flip-bot
