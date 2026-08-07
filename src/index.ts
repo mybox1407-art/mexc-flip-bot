@@ -199,6 +199,12 @@ async function bootstrap(): Promise<void> {
         return;
       }
 
+      // Пропускаем тикеры, у которых нет active mapping в DEX
+      const mapping = dexMapper.get(ticker.symbol);
+      if (!mapping || mapping.status !== "active") {
+        return;
+      }
+
       const signal = spreadEngine.evaluate(ticker);
 
       if (signal) {
