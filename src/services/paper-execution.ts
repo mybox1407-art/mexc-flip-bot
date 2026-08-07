@@ -3,9 +3,10 @@ import { config } from "../config.js";
 import { logger } from "../logger.js";
 
 import type {
-  PaperTrade,
+  CloseReason,
   FlipSignal,
-  MexcTicker
+  MexcTicker,
+  PaperTrade
 } from "../types.js";
 
 import type {
@@ -22,11 +23,13 @@ type PaperAction =
       trade: PaperTrade;
     };
 
-function normalizeSymbol(value: string): string {
+function normalizeSymbol(
+  value: string
+): string {
   return String(value)
     .trim()
     .toUpperCase()
-    .replace(/[_\-\/\s]/g, "");
+    .replace(/[_\-/\s]/g, "");
 }
 
 function round(
@@ -38,12 +41,18 @@ function round(
 }
 
 export class PaperExecutionService {
-  private readonly openTrades = new Map<
-    string,
-    PaperTrade
-  >();
+  private readonly openTrades =
+    new Map<string, PaperTrade>();
+
+  private readonly processedCloseTrades =
+    new Set<string>();
+
+  private readonly liquidityAtEntry =
+    new Map<string, number>();
 
   private readonly maxOpenTrades = 3;
+
+  // 0.3 = 30% депозита.
   private readonly tradeAllocationPct = 0.3;
 
   private depositUsd = 100;
@@ -56,32 +65,64 @@ export class PaperExecutionService {
     return this.openTrades.size;
   }
 
+  private getTotalCostsPct(): number {
+    return (
+      config.mexcEntryFeePct +
+      config.mexcExitFeePct +
+      config.mexcEntrySlippagePct +
+      config.mexcExitSlippagePct +
+      config.latencyBufferPct
+    );
+  }
+
+  private estimateExecutableDexPrice(
+    anchor: AnchorStatus,
+    qtyUsd: number,
+    direction: "LONG" | "SHORT"
+  ): number {
+    if (
+      !Number.isFinite(anchor.dexPrice) ||
+      anchor.dexPrice <= 0 ||
+      !Number.isFinite(
+        anchor.dexLiquidityUsd
+      ) ||
+      anchor.dexLiquidityUsd <= 0 ||
+      !Number.isFinite(qtyUsd) ||
+      qtyUsd <= 0
+    ) {
+      return NaN;
+    }
+
+    const estimatedImpactPct =
+      Math.min(
+        (qtyUsd /
+          anchor.dexLiquidityUsd) *
+          100,
+        config.paperMaxDexPriceImpactPct
+      );
+
+    if (direction === "LONG") {
+      return (
+        anchor.dexPrice *
+        (1 + estimatedImpactPct / 100)
+      );
+    }
+
+    return (
+      anchor.dexPrice *
+      (1 - estimatedImpactPct / 100)
+    );
+  }
+
   onSignal(
     signal: FlipSignal
   ): PaperAction | null {
-    const positionKey = normalizeSymbol(
-      signal.symbol
-    );
+    const positionKey =
+      normalizeSymbol(signal.symbol);
 
-    const existing =
-      this.openTrades.get(positionKey);
-
-    if (existing) {
-      logger.debug(
-        {
-          symbol: signal.symbol,
-          positionKey,
-          existingDirection:
-            existing.direction,
-          existingEntryPrice:
-            existing.entryPrice,
-          newDirection: signal.direction,
-          newSpreadPct: signal.spreadPct,
-          depositUsd: this.depositUsd
-        },
-        "Signal skipped: position already open"
-      );
-
+    if (
+      this.openTrades.has(positionKey)
+    ) {
       return null;
     }
 
@@ -89,16 +130,6 @@ export class PaperExecutionService {
       this.openTrades.size >=
       this.maxOpenTrades
     ) {
-      logger.debug(
-        {
-          symbol: signal.symbol,
-          openTrades: this.openTrades.size,
-          maxOpenTrades: this.maxOpenTrades,
-          depositUsd: this.depositUsd
-        },
-        "Signal skipped: maximum open trades reached"
-      );
-
       return null;
     }
 
@@ -106,14 +137,6 @@ export class PaperExecutionService {
       !Number.isFinite(this.depositUsd) ||
       this.depositUsd <= 0
     ) {
-      logger.warn(
-        {
-          symbol: signal.symbol,
-          depositUsd: this.depositUsd
-        },
-        "Signal skipped: deposit is empty"
-      );
-
       return null;
     }
 
@@ -126,15 +149,6 @@ export class PaperExecutionService {
       !Number.isFinite(entryPrice) ||
       entryPrice <= 0
     ) {
-      logger.warn(
-        {
-          symbol: signal.symbol,
-          direction: signal.direction,
-          entryPrice
-        },
-        "Invalid paper entry price"
-      );
-
       return null;
     }
 
@@ -154,43 +168,64 @@ export class PaperExecutionService {
       !Number.isFinite(qtyToken) ||
       qtyToken <= 0
     ) {
-      logger.warn(
-        {
-          symbol: signal.symbol,
-          depositUsd: depositAtEntry,
-          allocationPct:
-            this.tradeAllocationPct,
-          qtyUsd,
-          entryPrice,
-          qtyToken
-        },
-        "Invalid paper position size"
-      );
-
       return null;
     }
 
-    logger.info(
-      {
-        symbol: signal.symbol,
-        direction: signal.direction,
-        entryPrice: entryPrice.toFixed(6),
-        depositAtEntry,
-        allocationPct:
-          this.tradeAllocationPct,
+    const anchor: AnchorStatus = {
+      symbol: signal.symbol,
+      dexPrice: signal.dexPrice,
+      dexLiquidityUsd:
+        signal.dexLiquidityUsd,
+      dexVolumeM5:
+        signal.dexVolumeM5,
+      dexBuysM5:
+        signal.dexBuysM5,
+      dexSellsM5:
+        signal.dexSellsM5,
+      dexId: signal.dexId,
+      chainId: signal.chainId,
+      quoteSymbol: signal.quoteSymbol,
+      dexPairAddress:
+        signal.dexPairAddress,
+      anchorAgeMs:
+        signal.anchorAgeMs,
+      dexUpdatedAt:
+        signal.dexUpdatedAt,
+      dexDriftPct:
+        signal.dexDriftPct,
+      dexDirectionalDriftPct:
+        signal.dexDirectionalDriftPct,
+      mexcBid:
+        signal.mexcBid,
+      mexcAsk:
+        signal.mexcAsk,
+      mexcLast:
+        signal.mexcPrice,
+      mexcTurnover24h:
+        signal.mexcTurnover24h,
+      mexcBookSpreadPct:
+        signal.mexcBookSpreadPct,
+      longSpreadPct:
+        signal.spreadPct,
+      shortSpreadPct:
+        signal.spreadPct
+    };
+
+    const executableDexPrice =
+      this.estimateExecutableDexPrice(
+        anchor,
         qtyUsd,
-        qtyToken: qtyToken.toFixed(8),
-        openTrades: this.openTrades.size,
-        maxOpenTrades: this.maxOpenTrades,
-        spreadPct: signal.spreadPct.toFixed(3),
-        netEdgePct: signal.netEdgePct.toFixed(3),
-        dexPrice: signal.dexPrice.toFixed(6),
-        mexcBid: signal.mexcBid.toFixed(6),
-        mexcAsk: signal.mexcAsk.toFixed(6),
-        reason: signal.reason
-      },
-      "Opening paper trade"
-    );
+        signal.direction
+      );
+
+    if (
+      !Number.isFinite(
+        executableDexPrice
+      ) ||
+      executableDexPrice <= 0
+    ) {
+      return null;
+    }
 
     const trade: PaperTrade = {
       id: crypto.randomUUID(),
@@ -198,7 +233,8 @@ export class PaperExecutionService {
       direction: signal.direction,
       status: "OPEN",
 
-      openedAt: new Date().toISOString(),
+      openedAt:
+        new Date().toISOString(),
 
       entryPrice: round(entryPrice),
 
@@ -210,29 +246,33 @@ export class PaperExecutionService {
       qtyUsd: round(qtyUsd, 2),
       qtyToken: round(qtyToken, 8),
 
-      depositAtEntry: round(
-        depositAtEntry,
-        4
-      ),
+      depositAtEntry:
+        round(depositAtEntry, 4),
 
       allocationPct:
         this.tradeAllocationPct,
 
-      dexAnchorAtEntry: round(
-        signal.dexPrice
-      ),
+      dexAnchorAtEntry:
+        round(executableDexPrice),
 
-      entrySpreadPct: round(
-        signal.spreadPct,
-        4
-      ),
+      dexSnapshotAtEntry:
+        signal.dexUpdatedAt,
 
-      openReason: signal.reason
+      entrySpreadPct:
+        round(signal.spreadPct, 4),
+
+      openReason:
+        signal.reason
     };
 
     this.openTrades.set(
       positionKey,
       trade
+    );
+
+    this.liquidityAtEntry.set(
+      positionKey,
+      signal.dexLiquidityUsd
     );
 
     logger.warn(
@@ -247,9 +287,8 @@ export class PaperExecutionService {
           trade.depositAtEntry,
         allocationPct:
           trade.allocationPct,
-        openTrades: this.openTrades.size,
-        entrySpreadPct:
-          trade.entrySpreadPct
+        dexAnchorAtEntry:
+          trade.dexAnchorAtEntry
       },
       "PAPER TRADE OPENED"
     );
@@ -264,9 +303,8 @@ export class PaperExecutionService {
     ticker: MexcTicker,
     anchor: AnchorStatus | null
   ): PaperAction | null {
-    const positionKey = normalizeSymbol(
-      ticker.symbol
-    );
+    const positionKey =
+      normalizeSymbol(ticker.symbol);
 
     const trade =
       this.openTrades.get(positionKey);
@@ -275,216 +313,216 @@ export class PaperExecutionService {
       return null;
     }
 
-    if (!anchor) {
-      logger.debug(
-        {
-          symbol: ticker.symbol,
-          tradeDirection: trade.direction,
-          entryPrice: trade.entryPrice,
-          depositUsd: this.depositUsd
-        },
-        "Trade check skipped: no DEX anchor"
-      );
-
+    if (
+      this.processedCloseTrades.has(
+        trade.id
+      )
+    ) {
       return null;
     }
 
     const now = Date.now();
 
     const openedAt =
-      new Date(trade.openedAt).getTime();
+      new Date(trade.openedAt)
+        .getTime();
 
     const holdMs = Math.max(
       0,
       now - openedAt
     );
 
-    const holdSec = Math.floor(
-      holdMs / 1000
-    );
-
-    const spreadPct =
-      trade.direction === "LONG"
-        ? anchor.longSpreadPct
-        : anchor.shortSpreadPct;
-
-    if (
-      !Number.isFinite(spreadPct)
-    ) {
-      logger.warn(
-        {
-          symbol: ticker.symbol,
-          tradeId: trade.id,
-          spreadPct
-        },
-        "Invalid exit spread"
-      );
-
-      return null;
-    }
-
-    const currentPrice =
-      Number(ticker.lastPrice);
-
-    logger.debug(
-      {
-        symbol: ticker.symbol,
-        direction: trade.direction,
-        entryPrice: trade.entryPrice,
-        currentPrice: Number.isFinite(
-          currentPrice
-        )
-          ? currentPrice.toFixed(6)
-          : "invalid",
-        spreadPct: spreadPct.toFixed(3),
-        holdSec,
-        exitThreshold:
-          config.paperExitSpreadPct,
-        stopThreshold:
-          config.paperStopSpreadPct,
-        maxHoldSec: Math.floor(
-          config.paperMaxHoldMs / 1000
-        ),
-        depositUsd: this.depositUsd
-      },
-      "Checking open position"
-    );
-
-    let shouldClose = false;
-    let closeReason = "";
-
-    // Сначала проверяем стоп-лосс.
-    // Это важно: отрицательный spread
-    // также удовлетворяет условию take-profit.
-    if (
-      spreadPct <=
-      -config.paperStopSpreadPct
-    ) {
-      shouldClose = true;
-      closeReason = "stop_loss";
-    } else if (
-      spreadPct <=
-      config.paperExitSpreadPct
-    ) {
-      shouldClose = true;
-      closeReason = "mean_reverted";
-    } else if (
-      holdMs >= config.paperMaxHoldMs
-    ) {
-      shouldClose = true;
-      closeReason = "timeout";
-    }
-
-    if (!shouldClose) {
-      return null;
-    }
-
     const exitPrice =
       trade.direction === "LONG"
-        ? anchor.mexcBid
-        : anchor.mexcAsk;
+        ? Number(ticker.bid1)
+        : Number(ticker.ask1);
 
     if (
       !Number.isFinite(exitPrice) ||
       exitPrice <= 0
     ) {
-      logger.warn(
-        {
-          symbol: ticker.symbol,
-          tradeId: trade.id,
-          exitPrice
-        },
-        "Invalid paper exit price"
-      );
-
       return null;
     }
 
     const grossPnlPct =
       trade.direction === "LONG"
         ? (
-            (exitPrice - trade.entryPrice) /
+            (exitPrice -
+              trade.entryPrice) /
             trade.entryPrice
           ) * 100
         : (
-            (trade.entryPrice - exitPrice) /
+            (trade.entryPrice -
+              exitPrice) /
             trade.entryPrice
           ) * 100;
 
-    // Учитываются только расходы MEXC.
-    // DEX используется только как reference price.
     const totalCostsPct =
-      config.assumedFeesPct +
-      config.assumedSlippagePct;
+      this.getTotalCostsPct();
 
     const netPnlPct =
-      grossPnlPct -
-      totalCostsPct;
+      grossPnlPct - totalCostsPct;
 
     const grossPnlUsd =
-      (trade.qtyUsd * grossPnlPct) /
+      (trade.qtyUsd *
+        grossPnlPct) /
       100;
 
     const netPnlUsd =
-      (trade.qtyUsd * netPnlPct) /
+      (trade.qtyUsd *
+        netPnlPct) /
       100;
 
     if (
+      !Number.isFinite(netPnlPct) ||
       !Number.isFinite(netPnlUsd)
     ) {
-      logger.error(
-        {
-          tradeId: trade.id,
-          symbol: trade.symbol,
-          grossPnlPct,
-          netPnlPct,
-          grossPnlUsd,
-          netPnlUsd
-        },
-        "Invalid paper PnL"
-      );
-
       return null;
     }
+
+    let closeReason:
+      | CloseReason
+      | null = null;
+
+    let currentDexPrice:
+      | number
+      | undefined;
+
+    let currentSpreadPct:
+      | number
+      | undefined;
+
+    if (anchor) {
+      currentDexPrice =
+        this.estimateExecutableDexPrice(
+          anchor,
+          trade.qtyUsd,
+          trade.direction
+        );
+
+      if (
+        Number.isFinite(
+          currentDexPrice
+        ) &&
+        currentDexPrice > 0
+      ) {
+        const anchorMovePct =
+          (
+            (currentDexPrice -
+              trade.dexAnchorAtEntry) /
+            trade.dexAnchorAtEntry
+          ) * 100;
+
+        const movedAgainst =
+          trade.direction === "LONG"
+            ? anchorMovePct <=
+              -config.paperMaxAnchorMoveAgainstPct
+            : anchorMovePct >=
+              config.paperMaxAnchorMoveAgainstPct;
+
+        if (movedAgainst) {
+          closeReason =
+            "anchor_moved_against_position";
+        }
+
+        currentSpreadPct =
+          trade.direction === "LONG"
+            ? (
+                (currentDexPrice -
+                  anchor.mexcAsk) /
+                anchor.mexcAsk
+              ) * 100
+            : (
+                (anchor.mexcBid -
+                  currentDexPrice) /
+                anchor.mexcBid
+              ) * 100;
+      }
+
+      const entryLiquidity =
+        this.liquidityAtEntry.get(
+          positionKey
+        );
+
+      if (
+        entryLiquidity &&
+        entryLiquidity > 0
+      ) {
+        const liquidityDropPct =
+          (
+            (entryLiquidity -
+              anchor.dexLiquidityUsd) /
+            entryLiquidity
+          ) * 100;
+
+        if (
+          liquidityDropPct >=
+          config.paperMaxLiquidityDropPct
+        ) {
+          closeReason =
+            "liquidity_drop";
+        }
+      }
+
+      if (
+        anchor.anchorAgeMs >
+        config.maxDexAnchorAgeMs
+      ) {
+        closeReason =
+          "anchor_stale";
+      }
+    }
+
+    if (
+      netPnlPct <=
+      -config.paperStopLossPct
+    ) {
+      closeReason = "stop_loss";
+    } else if (
+      !closeReason &&
+      currentSpreadPct !== undefined &&
+      currentSpreadPct <=
+        config.paperExitSpreadPct
+    ) {
+      closeReason =
+        netPnlPct > 0
+          ? "mean_reverted_profit"
+          : "mean_reverted_loss";
+    } else if (
+      !closeReason &&
+      holdMs >= config.paperMaxHoldMs
+    ) {
+      closeReason = "timeout";
+    }
+
+    if (!closeReason) {
+      return null;
+    }
+
+    this.processedCloseTrades.add(
+      trade.id
+    );
 
     const depositBeforeClose =
       this.depositUsd;
 
-    const depositAfterClose = Math.max(
-      0,
-      round(
-        depositBeforeClose + netPnlUsd,
-        4
-      )
-    );
-
-    logger.warn(
-      {
-        id: trade.id,
-        symbol: trade.symbol,
-        direction: trade.direction,
-        entryPrice: trade.entryPrice,
-        exitPrice: exitPrice.toFixed(6),
-        grossPnlPct: grossPnlPct.toFixed(4),
-        netPnlPct: netPnlPct.toFixed(4),
-        grossPnlUsd: grossPnlUsd.toFixed(4),
-        netPnlUsd: netPnlUsd.toFixed(4),
-        depositBeforeClose,
-        depositAfterClose,
-        holdSec,
-        closeReason,
-        entrySpreadPct: trade.entrySpreadPct,
-        exitSpreadPct: spreadPct.toFixed(3)
-      },
-      "Closing paper trade"
-    );
+    const depositAfterClose =
+      Math.max(
+        0,
+        round(
+          depositBeforeClose +
+            netPnlUsd,
+          4
+        )
+      );
 
     const closedTrade: PaperTrade = {
       ...trade,
 
       status: "CLOSED",
 
-      closedAt: new Date(now).toISOString(),
+      closedAt:
+        new Date(now).toISOString(),
 
       exitPrice: round(exitPrice),
 
@@ -493,46 +531,43 @@ export class PaperExecutionService {
           ? "BID"
           : "ASK",
 
-      dexAnchorAtExit: round(
-        anchor.dexPrice
-      ),
+      dexAnchorAtExit:
+        currentDexPrice ??
+        trade.dexAnchorAtEntry,
 
-      exitSpreadPct: round(
-        spreadPct,
-        4
-      ),
+      dexSnapshotAtExit:
+        anchor?.dexUpdatedAt,
 
-      grossPnlPct: round(
-        grossPnlPct,
-        4
-      ),
+      exitSpreadPct:
+        currentSpreadPct !== undefined
+          ? round(currentSpreadPct, 4)
+          : undefined,
 
-      netPnlPct: round(
-        netPnlPct,
-        4
-      ),
+      grossPnlPct:
+        round(grossPnlPct, 4),
 
-      grossPnlUsd: round(
-        grossPnlUsd,
-        4
-      ),
+      netPnlPct:
+        round(netPnlPct, 4),
 
-      netPnlUsd: round(
-        netPnlUsd,
-        4
-      ),
+      grossPnlUsd:
+        round(grossPnlUsd, 4),
+
+      netPnlUsd:
+        round(netPnlUsd, 4),
 
       depositAfterClose,
-
       holdMs,
       closeReason
     };
 
-    // Депозит изменяется только после закрытия сделки.
     this.depositUsd =
       depositAfterClose;
 
     this.openTrades.delete(
+      positionKey
+    );
+
+    this.liquidityAtEntry.delete(
       positionKey
     );
 
@@ -541,23 +576,24 @@ export class PaperExecutionService {
         id: closedTrade.id,
         symbol: closedTrade.symbol,
         direction: closedTrade.direction,
-        entryPrice: closedTrade.entryPrice,
-        exitPrice: closedTrade.exitPrice,
+        entryPrice:
+          closedTrade.entryPrice,
+        exitPrice:
+          closedTrade.exitPrice,
         grossPnlPct:
-          closedTrade.grossPnlPct?.toFixed(4),
+          closedTrade.grossPnlPct,
         netPnlPct:
-          closedTrade.netPnlPct?.toFixed(4),
+          closedTrade.netPnlPct,
         grossPnlUsd:
-          closedTrade.grossPnlUsd?.toFixed(4),
+          closedTrade.grossPnlUsd,
         netPnlUsd:
-          closedTrade.netPnlUsd?.toFixed(4),
+          closedTrade.netPnlUsd,
         depositAtEntry:
           closedTrade.depositAtEntry,
-        depositAfterClose:
-          closedTrade.depositAfterClose,
-        openTrades: this.openTrades.size,
-        holdSec,
-        closeReason: closedTrade.closeReason
+        depositBeforeClose,
+        depositAfterClose,
+        holdMs,
+        closeReason
       },
       "PAPER TRADE CLOSED"
     );
