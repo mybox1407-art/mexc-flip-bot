@@ -98,22 +98,22 @@ export class SpreadEngine {
 
     const anchor = this.dexSnapshots.get(snapshotKey);
 
-    if (!anchor) {
-      logger.info(
-        {
-          tickerSymbol: ticker.symbol,
-          snapshotKey,
-          mappingDexKey: mapping?.normalizedDexKey,
-          hasAnchor: false,
-          snapshotKeysCount: this.dexSnapshots.size,
-          mappingStatus: mapping?.status,
-          mappingChainId: mapping?.chainId,
-          mappingDexPairAddress: mapping?.dexPairAddress
-        },
-        "⚠️ No anchor for ticker"
-      );
-      return null;
-    }
+    //if (!anchor) {
+    //  logger.info(
+    //    {
+    //      tickerSymbol: ticker.symbol,
+    //      snapshotKey,
+    //      mappingDexKey: mapping?.normalizedDexKey,
+    //      hasAnchor: false,
+    //      snapshotKeysCount: this.dexSnapshots.size,
+    //      mappingStatus: mapping?.status,
+    //      mappingChainId: mapping?.chainId,
+    //      mappingDexPairAddress: mapping?.dexPairAddress
+    //    },
+    //    "⚠️ No anchor for ticker"
+    //  );
+    //  return null;
+    // }
 
     const now = Date.now();
     const anchorAgeMs = now - anchor.updatedAt;
