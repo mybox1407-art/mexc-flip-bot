@@ -79,6 +79,11 @@ async function bootstrap(): Promise<void> {
     "Starting MEXC flip bot: DEX anchor + MEXC paper execution mode"
   );
 
+  // ========== Startup tickers (история) ==========
+
+  // Тикеры, которые были обработаны в startup backfill (по STARTUP_BACKFILL_LIMIT)
+  const startupTickers = new Set<string>();
+
   // ========== Обработчик новых контрактов ==========
 
   const handleNewContract = async (contract: MexcContract): Promise<void> => {
@@ -94,6 +99,9 @@ async function bootstrap(): Promise<void> {
     });
 
     const normalizedSymbol = normalizeSymbol(contract.symbol);
+
+    // Добавляем в set startup-тикеров (история)
+    startupTickers.add(contract.symbol);
 
     const existing = dexMapper.get(contract.symbol);
     if (existing && existing.status === "active") {
@@ -186,6 +194,11 @@ async function bootstrap(): Promise<void> {
 
   const mexcWsClient = new MexcFuturesWsClient({
     onTicker: async (ticker: MexcTicker) => {
+      // Пропускаем тикеры, которые были в startup backfill (история)
+      if (startupTickers.has(ticker.symbol)) {
+        return;
+      }
+
       const signal = spreadEngine.evaluate(ticker);
 
       if (signal) {
