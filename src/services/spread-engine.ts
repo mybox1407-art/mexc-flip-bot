@@ -116,8 +116,8 @@ export class SpreadEngine {
 
     // 2. Mapping есть, но anchor snapshot отсутствует
     if (!anchor) {
-      // Проверяем возраст mapping
-      const mappingAgeMs = mapping.updatedAt
+      // Проверяем возраст mapping через mappedAt
+      const mappingAgeMs = mapping.mappedAt
         ? Date.now() - new Date(mapping.mappedAt).getTime()
         : Infinity;
 
