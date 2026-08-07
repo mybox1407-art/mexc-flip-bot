@@ -80,12 +80,13 @@ export class SpreadEngine {
     const cutoff = now - 30_000;
     state.dexHistory = state.dexHistory.filter((point) => point.ts >= cutoff);
 
-    logger.debug(
+    logger.info(
       {
         symbol,
         snapshotKey,
         price: pair.priceUsd.toFixed(6),
-        liquidity: pair.liquidityUsd.toFixed(0)
+        liquidity: pair.liquidityUsd.toFixed(0),
+        snapshotKeysCount: this.dexSnapshots.size
       },
       "DEX snapshot saved"
     );
@@ -99,19 +100,19 @@ export class SpreadEngine {
     const anchor = this.dexSnapshots.get(snapshotKey);
 
     if (!anchor) {
-    //  logger.info(
-    //    {
-    //      tickerSymbol: ticker.symbol,
-    //      snapshotKey,
-    //      mappingDexKey: mapping?.normalizedDexKey,
-    //      hasAnchor: false,
-    //      snapshotKeysCount: this.dexSnapshots.size,
-    //      mappingStatus: mapping?.status,
-    //      mappingChainId: mapping?.chainId,
-    //      mappingDexPairAddress: mapping?.dexPairAddress
-    //    },
-    //    "⚠️ No anchor for ticker"
-    //  );
+      logger.info(
+        {
+          tickerSymbol: ticker.symbol,
+          snapshotKey,
+          mappingDexKey: mapping?.normalizedDexKey,
+          hasAnchor: false,
+          snapshotKeysCount: this.dexSnapshots.size,
+          mappingStatus: mapping?.status,
+          mappingChainId: mapping?.chainId,
+          mappingDexPairAddress: mapping?.dexPairAddress
+        },
+        "⚠️ No anchor for ticker"
+      );
       return null;
     }
 
