@@ -102,11 +102,6 @@ export class DexScreenerClient {
 
   private requestCounter = 0;
 
-  /**
-   * Все запросы проходят последовательно.
-   * Это предотвращает одновременные запросы,
-   * которые могут привести к burst/rate limit.
-   */
   private requestQueue: Promise<void> =
     Promise.resolve();
 
@@ -301,10 +296,7 @@ export class DexScreenerClient {
         );
 
         if (attempt < 4) {
-          const backoffMs =
-            attempt * 1500;
-
-          await sleep(backoffMs);
+          await sleep(attempt * 1500);
           continue;
         }
 
@@ -408,20 +400,46 @@ export class DexScreenerClient {
       config.dexMaxPairAgeHours *
       3_600_000;
 
+    // Нормализуем регистр конфигурации один раз.
+    const preferredChains =
+      config.dexPreferredChains.map(
+        (item) => item.trim().toLowerCase()
+      );
+
+    const quotePriority =
+      config.dexQuotePriority.map(
+        (item) => item.trim().toUpperCase()
+      );
+
+    logger.debug(
+      {
+        query,
+        preferredChains,
+        quotePriority
+      },
+      "DexScreener normalized filter configuration"
+    );
+
     const candidates = pairs
       .filter((pair) => {
         const chainId =
           (
             pair.chainId ?? ""
-          ).toLowerCase();
+          )
+            .trim()
+            .toLowerCase();
 
         const quoteSymbol =
           (
             pair.quoteToken?.symbol ?? ""
-          ).toLowerCase();
+          )
+            .trim()
+            .toUpperCase();
 
         const baseSymbol =
-          pair.baseToken?.symbol ?? "";
+          (
+            pair.baseToken?.symbol ?? ""
+          ).trim();
 
         const liquidityUsd =
           Number(
@@ -454,7 +472,7 @@ export class DexScreenerClient {
           );
 
         if (
-          !config.dexPreferredChains.includes(
+          !preferredChains.includes(
             chainId
           )
         ) {
@@ -462,8 +480,8 @@ export class DexScreenerClient {
         }
 
         if (
-          !config.dexQuotePriority.includes(
-            quoteSymbol.toUpperCase()
+          !quotePriority.includes(
+            quoteSymbol
           )
         ) {
           return false;
@@ -520,7 +538,9 @@ export class DexScreenerClient {
       .map((pair): DexPair => ({
         chainId: (
           pair.chainId ?? ""
-        ).toLowerCase(),
+        )
+          .trim()
+          .toLowerCase(),
 
         dexId:
           pair.dexId ?? "",
@@ -566,19 +586,26 @@ export class DexScreenerClient {
       }))
       .sort((a, b) => {
         const quoteRankA =
-          config.dexQuotePriority.indexOf(
-            a.quoteSymbol.toUpperCase()
+          quotePriority.indexOf(
+            a.quoteSymbol
+              .trim()
+              .toUpperCase()
           );
 
         const quoteRankB =
-          config.dexQuotePriority.indexOf(
-            b.quoteSymbol.toUpperCase()
+          quotePriority.indexOf(
+            b.quoteSymbol
+              .trim()
+              .toUpperCase()
           );
 
         if (
           quoteRankA !== quoteRankB
         ) {
-          return quoteRankA - quoteRankB;
+          return (
+            quoteRankA -
+            quoteRankB
+          );
         }
 
         if (
@@ -648,10 +675,8 @@ export class DexScreenerClient {
           query,
           receivedPairs: pairs.length,
           normalizedQuery,
-          preferredChains:
-            config.dexPreferredChains,
-          quotePriority:
-            config.dexQuotePriority,
+          preferredChains,
+          quotePriority,
           minLiquidityUsd:
             config.dexMinLiquidityUsd,
           minVolumeM5Usd:
@@ -687,7 +712,7 @@ export class DexScreenerClient {
       return null;
     }
 
-    // 1. Основной запрос
+    // Основной запрос.
     let pair =
       await this.findPairByQuery(query);
 
@@ -695,7 +720,7 @@ export class DexScreenerClient {
       return pair;
     }
 
-    // 2. Fallback по алиасам
+    // Fallback по алиасам.
     const aliases =
       this.getQueryAliases(query);
 
@@ -859,7 +884,9 @@ export class DexScreenerClient {
     const result: DexPair = {
       chainId: (
         pair.chainId ?? chainId
-      ).toLowerCase(),
+      )
+        .trim()
+        .toLowerCase(),
 
       dexId:
         pair.dexId ?? "",
