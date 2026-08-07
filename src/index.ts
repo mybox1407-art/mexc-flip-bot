@@ -1,18 +1,26 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+
 import { CsvWriter } from "./services/csv-writer.js";
 import { DexMapper } from "./services/dex-mapper.js";
-import { MexcFuturesRestClient } from "./mexc/futures-rest.js";
-import { MexcFuturesWsClient } from "./mexc/futures-ws.js";
-import { DexScreenerClient } from "./mexc/dexscreener.js";
 import { ContractWatcher } from "./services/contract-watcher.js";
 import { DexPricePoller } from "./services/dex-price-poller.js";
 import { SpreadEngine } from "./services/spread-engine.js";
 import { PaperExecutionService } from "./services/paper-execution.js";
 import { TelegramNotifier } from "./services/telegram-notifier.js";
-import type { CsvRow, MexcContract, MexcTicker } from "./types.js";
+
+import { MexcFuturesRestClient } from "./mexc/futures-rest.js";
+import { MexcFuturesWsClient } from "./mexc/futures-ws.js";
+import { DexScreenerClient } from "./mexc/dexscreener.js";
+
+import type {
+  CsvRow,
+  MexcContract,
+  MexcTicker
+} from "./types.js";
 
 // ========== Нормализация символов ==========
 
@@ -28,10 +36,25 @@ function shouldSkipDexLookup(symbol: string): boolean {
   const base = upper.split("_")[0] ?? upper;
   const normalized = normalizeSymbol(base);
 
-  if (upper.includes("_USD1")) return true;
-  if (base.includes("STOCK")) return true;
-  if (/(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(base)) return true;
-  if (/^\d{3,}/.test(normalized)) return true;
+  if (upper.includes("_USD1")) {
+    return true;
+  }
+
+  if (base.includes("STOCK")) {
+    return true;
+  }
+
+  if (
+    /(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(
+      base
+    )
+  ) {
+    return true;
+  }
+
+  if (/^\d{3,}/.test(normalized)) {
+    return true;
+  }
 
   return false;
 }
@@ -39,24 +62,99 @@ function shouldSkipDexLookup(symbol: string): boolean {
 // ========== Bootstrap ==========
 
 async function bootstrap(): Promise<void> {
-  await mkdir(config.dataDir, { recursive: true });
+  await mkdir(config.dataDir, {
+    recursive: true
+  });
 
-  const contractsWriter = new CsvWriter(path.join(config.dataDir, "new-contracts.csv"));
-  const dexPricesWriter = new CsvWriter(path.join(config.dataDir, "dex-prices.csv"));
-  const spreadSignalsWriter = new CsvWriter(path.join(config.dataDir, "spread-signals.csv"));
-  const paperTradesWriter = new CsvWriter(path.join(config.dataDir, "paper-trades.csv"));
-  const dealsWriter = new CsvWriter(path.join(config.dataDir, "deals.csv"));
-  const depthWriter = new CsvWriter(path.join(config.dataDir, "depth.csv"));
-
-  const mexcRestClient = new MexcFuturesRestClient();
-  const dexScreenerClient = new DexScreenerClient();
-  const dexMapper = new DexMapper();
-  const spreadEngine = new SpreadEngine(dexMapper);
-  const paperExecution = new PaperExecutionService();
-  const telegramNotifier = new TelegramNotifier(
-    config.telegramBotToken,
-    config.telegramChatId
+  const contractsWriter = new CsvWriter(
+    path.join(
+      config.dataDir,
+      "new-contracts.csv"
+    )
   );
+
+  const dexPricesWriter = new CsvWriter(
+    path.join(
+      config.dataDir,
+      "dex-prices.csv"
+    )
+  );
+
+  const spreadSignalsWriter = new CsvWriter(
+    path.join(
+      config.dataDir,
+      "spread-signals.csv"
+    )
+  );
+
+  const paperTradeColumns = [
+    "event",
+    "id",
+    "symbol",
+    "direction",
+    "status",
+    "openedAt",
+    "closedAt",
+    "entryPrice",
+    "exitPrice",
+    "entryRef",
+    "exitRef",
+    "qtyUsd",
+    "qtyToken",
+    "dexAnchorAtEntry",
+    "dexAnchorAtExit",
+    "entrySpreadPct",
+    "exitSpreadPct",
+    "grossPnlPct",
+    "netPnlPct",
+    "grossPnlUsd",
+    "netPnlUsd",
+    "holdMs",
+    "openReason",
+    "closeReason"
+  ] as const;
+
+  const paperTradesWriter = new CsvWriter(
+    path.join(
+      config.dataDir,
+      "paper-trades.csv"
+    ),
+    paperTradeColumns
+  );
+
+  const dealsWriter = new CsvWriter(
+    path.join(
+      config.dataDir,
+      "deals.csv"
+    )
+  );
+
+  const depthWriter = new CsvWriter(
+    path.join(
+      config.dataDir,
+      "depth.csv"
+    )
+  );
+
+  const mexcRestClient =
+    new MexcFuturesRestClient();
+
+  const dexScreenerClient =
+    new DexScreenerClient();
+
+  const dexMapper = new DexMapper();
+
+  const spreadEngine =
+    new SpreadEngine(dexMapper);
+
+  const paperExecution =
+    new PaperExecutionService();
+
+  const telegramNotifier =
+    new TelegramNotifier(
+      config.telegramBotToken,
+      config.telegramChatId
+    );
 
   await dexMapper.load();
   await telegramNotifier.sendStartup();
@@ -65,28 +163,38 @@ async function bootstrap(): Promise<void> {
     {
       minSpreadPct: config.minSpreadPct,
       minNetEdgePct: config.minNetEdgePct,
-      dexMinLiquidityUsd: config.dexMinLiquidityUsd,
-      dexMinVolumeM5Usd: config.dexMinVolumeM5Usd,
-      minMexcTurnover24h: config.minMexcTurnover24h,
-      paperTradeUsdSize: config.paperTradeUsdSize,
-      paperExitSpreadPct: config.paperExitSpreadPct,
-      paperStopSpreadPct: config.paperStopSpreadPct,
-      dexPreferredChains: config.dexPreferredChains,
+      dexMinLiquidityUsd:
+        config.dexMinLiquidityUsd,
+      dexMinVolumeM5Usd:
+        config.dexMinVolumeM5Usd,
+      minMexcTurnover24h:
+        config.minMexcTurnover24h,
+      paperTradeUsdSize:
+        config.paperTradeUsdSize,
+      paperExitSpreadPct:
+        config.paperExitSpreadPct,
+      paperStopSpreadPct:
+        config.paperStopSpreadPct,
+      dexPreferredChains:
+        config.dexPreferredChains,
       dexPollMs: config.dexPollMs,
-      telegramEnabled: telegramNotifier.enabled,
-      activeMappings: dexMapper.getActive().length
+      telegramEnabled:
+        telegramNotifier.enabled,
+      activeMappings:
+        dexMapper.getActive().length
     },
     "Starting MEXC flip bot: DEX anchor + MEXC paper execution mode"
   );
 
-  // ========== Startup tickers (история) ==========
-
-  // Тикеры, которые были обработаны в startup backfill и не имеют active mapping
+  // Тикеры, которые были обработаны
+  // в startup backfill и не имеют active mapping.
   const startupTickers = new Set<string>();
 
   // ========== Обработчик новых контрактов ==========
 
-  const handleNewContract = async (contract: MexcContract): Promise<void> => {
+  const handleNewContract = async (
+    contract: MexcContract
+  ): Promise<void> => {
     await contractsWriter.appendRow({
       detectedAt: new Date().toISOString(),
       symbol: contract.symbol,
@@ -98,49 +206,73 @@ async function bootstrap(): Promise<void> {
       contractSize: contract.contractSize ?? ""
     });
 
-    const normalizedSymbol = normalizeSymbol(contract.symbol);
+    const normalizedSymbol = normalizeSymbol(
+      contract.symbol
+    );
 
-    const existing = dexMapper.get(contract.symbol);
-    if (existing && existing.status === "active") {
-      // Mapping уже есть и active — не добавляем в startupTickers
+    const existing = dexMapper.get(
+      contract.symbol
+    );
+
+    if (
+      existing &&
+      existing.status === "active"
+    ) {
       return;
     }
 
-    if (shouldSkipDexLookup(contract.symbol)) {
+    if (
+      shouldSkipDexLookup(contract.symbol)
+    ) {
       logger.info(
-        { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
-        "⛔ Skipping DEX lookup for unsupported synthetic contract"
+        {
+          symbol: contract.symbol,
+          displayName: contract.displayName,
+          baseCoin: contract.baseCoin
+        },
+        "Skipping DEX lookup for unsupported synthetic contract"
       );
-      // Добавляем в startupTickers, чтобы не обрабатывать повторно
+
       startupTickers.add(contract.symbol);
       return;
     }
 
-    if (existing && existing.status === "not_found") {
-      // Mapping явно не найден — добавляем в startupTickers
+    if (
+      existing &&
+      existing.status === "not_found"
+    ) {
       startupTickers.add(contract.symbol);
       return;
     }
 
-    const searchQuery = contract.baseCoin ?? contract.symbol.split("_")[0] ?? contract.symbol;
+    const searchQuery =
+      contract.baseCoin ??
+      contract.symbol.split("_")[0] ??
+      contract.symbol;
 
-    const pair = await dexScreenerClient.findBestPairAcrossChains(searchQuery);
+    const pair =
+      await dexScreenerClient.findBestPairAcrossChains(
+        searchQuery
+      );
 
     if (!pair) {
-      // Пара не найдена — добавляем в startupTickers
       startupTickers.add(contract.symbol);
       return;
     }
 
-    const normalizedDexKey = normalizeSymbol(`${pair.baseSymbol}_${pair.quoteSymbol}`);
+    const normalizedDexKey = normalizeSymbol(
+      `${pair.baseSymbol}_${pair.quoteSymbol}`
+    );
 
     dexMapper.upsert({
       mexcSymbol: contract.symbol,
       chainId: pair.chainId,
       dexId: pair.dexId,
       pairAddress: pair.pairAddress,
-      baseTokenAddress: pair.baseTokenAddress,
-      quoteTokenAddress: pair.quoteTokenAddress,
+      baseTokenAddress:
+        pair.baseTokenAddress,
+      quoteTokenAddress:
+        pair.quoteTokenAddress,
       quoteSymbol: pair.quoteSymbol,
       liquidityUsd: pair.liquidityUsd,
       volumeM5: pair.volumeM5,
@@ -164,177 +296,281 @@ async function bootstrap(): Promise<void> {
         priceUsd: pair.priceUsd,
         normalizedDexKey
       },
-      "✅ New DEX mapping created"
+      "New DEX mapping created"
     );
 
-    // Mapping создан успешно — НЕ добавляем в startupTickers
+    // Mapping создан успешно.
+    // В startupTickers не добавляем.
   };
 
-  const contractWatcher = new ContractWatcher(mexcRestClient, handleNewContract);
+  const contractWatcher =
+    new ContractWatcher(
+      mexcRestClient,
+      handleNewContract
+    );
 
   // ========== DEX Price Poller ==========
 
-  const dexPricePoller = new DexPricePoller(
-    dexScreenerClient,
-    dexMapper,
-    async (mexcSymbol, pair) => {
-      spreadEngine.updateDexPrice(mexcSymbol, pair);
+  const dexPricePoller =
+    new DexPricePoller(
+      dexScreenerClient,
+      dexMapper,
+      async (mexcSymbol, pair) => {
+        spreadEngine.updateDexPrice(
+          mexcSymbol,
+          pair
+        );
 
-      await dexPricesWriter.appendRow({
-        timestamp: new Date().toISOString(),
-        mexcSymbol,
-        dexPrice: pair.priceUsd,
-        liquidityUsd: pair.liquidityUsd,
-        volumeM5: pair.volumeM5,
-        buysM5: pair.buysM5,
-        sellsM5: pair.sellsM5,
-        dexId: pair.dexId,
-        chainId: pair.chainId,
-        quoteSymbol: pair.quoteSymbol,
-        pairAddress: pair.pairAddress
-      });
-    }
-  );
+        await dexPricesWriter.appendRow({
+          timestamp: new Date().toISOString(),
+          mexcSymbol,
+          dexPrice: pair.priceUsd,
+          liquidityUsd: pair.liquidityUsd,
+          volumeM5: pair.volumeM5,
+          buysM5: pair.buysM5,
+          sellsM5: pair.sellsM5,
+          dexId: pair.dexId,
+          chainId: pair.chainId,
+          quoteSymbol: pair.quoteSymbol,
+          pairAddress: pair.pairAddress
+        });
+      }
+    );
 
   // ========== MEXC WebSocket ==========
 
-  const mexcWsClient = new MexcFuturesWsClient({
-    onTicker: async (ticker: MexcTicker) => {
-      // Пропускаем тикеры, которые были в startup backfill и не имеют active mapping
-      if (startupTickers.has(ticker.symbol)) {
-        return;
-      }
+  const mexcWsClient =
+    new MexcFuturesWsClient({
+      onTicker: async (
+        ticker: MexcTicker
+      ) => {
+        // Пропускаем тикеры,
+        // обработанные в startup backfill
+        // без active mapping.
+        if (
+          startupTickers.has(ticker.symbol)
+        ) {
+          return;
+        }
 
-      // Пропускаем тикеры, у которых нет active mapping в DEX
-      const mapping = dexMapper.get(ticker.symbol);
-      if (!mapping || mapping.status !== "active") {
-        return;
-      }
-
-      const signal = spreadEngine.evaluate(ticker);
-
-      if (signal) {
-        await spreadSignalsWriter.appendRow(signal as unknown as CsvRow);
-
-        logger.warn(
-          {
-            symbol: signal.symbol,
-            direction: signal.direction,
-            spreadPct: signal.spreadPct,
-            netEdgePct: signal.netEdgePct,
-            dexPrice: signal.dexPrice,
-            mexcPrice: signal.mexcPrice,
-            mexcBid: signal.mexcBid,
-            mexcAsk: signal.mexcAsk,
-            entryRef: signal.entryRef,
-            reason: signal.reason
-          },
-          "DEX anchor deviation signal detected on MEXC"
+        // Пропускаем тикеры без active DEX mapping.
+        const mapping = dexMapper.get(
+          ticker.symbol
         );
 
-        const opened = paperExecution.onSignal(signal);
+        if (
+          !mapping ||
+          mapping.status !== "active"
+        ) {
+          return;
+        }
 
-        if (opened?.action === "OPEN") {
-          await paperTradesWriter.appendRow({
-            event: "OPEN",
-            id: opened.trade.id,
-            symbol: opened.trade.symbol,
-            direction: opened.trade.direction,
-            openedAt: opened.trade.openedAt,
-            entryPrice: opened.trade.entryPrice,
-            entryRef: opened.trade.entryRef,
-            qtyUsd: opened.trade.qtyUsd,
-            qtyToken: opened.trade.qtyToken,
-            dexAnchorAtEntry: opened.trade.dexAnchorAtEntry,
-            entrySpreadPct: opened.trade.entrySpreadPct,
-            openReason: opened.trade.openReason
-          });
+        // ========== Генерация сигнала ==========
 
-          await telegramNotifier.sendTradeOpened(opened.trade);
+        const signal =
+          spreadEngine.evaluate(ticker);
+
+        if (signal) {
+          await spreadSignalsWriter.appendRow(
+            signal as unknown as CsvRow
+          );
 
           logger.warn(
             {
+              symbol: signal.symbol,
+              direction: signal.direction,
+              spreadPct: signal.spreadPct,
+              netEdgePct: signal.netEdgePct,
+              dexPrice: signal.dexPrice,
+              mexcPrice: signal.mexcPrice,
+              mexcBid: signal.mexcBid,
+              mexcAsk: signal.mexcAsk,
+              entryRef: signal.entryRef,
+              reason: signal.reason
+            },
+            "DEX anchor deviation signal detected on MEXC"
+          );
+
+          // ========== Открытие paper trade ==========
+
+          const opened =
+            paperExecution.onSignal(signal);
+
+          if (
+            opened &&
+            opened.action === "OPEN"
+          ) {
+            await paperTradesWriter.appendRow({
+              event: "OPEN",
               id: opened.trade.id,
               symbol: opened.trade.symbol,
               direction: opened.trade.direction,
-              entryPrice: opened.trade.entryPrice,
+              status: opened.trade.status,
+              openedAt: opened.trade.openedAt,
+              entryPrice:
+                opened.trade.entryPrice,
+              entryRef: opened.trade.entryRef,
               qtyUsd: opened.trade.qtyUsd,
-              qtyToken: opened.trade.qtyToken
-            },
-            "Paper trade opened"
-          );
+              qtyToken:
+                opened.trade.qtyToken,
+              dexAnchorAtEntry:
+                opened.trade.dexAnchorAtEntry,
+              entrySpreadPct:
+                opened.trade.entrySpreadPct,
+              openReason:
+                opened.trade.openReason
+            });
+
+            await telegramNotifier.sendTradeOpened(
+              opened.trade
+            );
+
+            logger.warn(
+              {
+                id: opened.trade.id,
+                symbol: opened.trade.symbol,
+                direction:
+                  opened.trade.direction,
+                entryPrice:
+                  opened.trade.entryPrice,
+                qtyUsd: opened.trade.qtyUsd,
+                qtyToken:
+                  opened.trade.qtyToken
+              },
+              "Paper trade opened"
+            );
+          }
         }
-      }
 
-      const anchorStatus = spreadEngine.getAnchorStatus(ticker);
-      const closed = paperExecution.onTicker(ticker, anchorStatus);
+        // ========== Проверка закрытия позиции ==========
 
-      if (closed?.action === "CLOSE") {
-        await paperTradesWriter.appendRow({
-          event: "CLOSE",
-          id: closed.trade.id,
-          symbol: closed.trade.symbol,
-          direction: closed.trade.direction,
-          openedAt: closed.trade.openedAt,
-          closedAt: closed.trade.closedAt,
-          entryPrice: closed.trade.entryPrice,
-          exitPrice: closed.trade.exitPrice,
-          entryRef: closed.trade.entryRef,
-          exitRef: closed.trade.exitRef,
-          qtyUsd: closed.trade.qtyUsd,
-          qtyToken: closed.trade.qtyToken,
-          dexAnchorAtEntry: closed.trade.dexAnchorAtEntry,
-          dexAnchorAtExit: closed.trade.dexAnchorAtExit,
-          entrySpreadPct: closed.trade.entrySpreadPct,
-          exitSpreadPct: closed.trade.exitSpreadPct,
-          grossPnlPct: closed.trade.grossPnlPct,
-          netPnlPct: closed.trade.netPnlPct,
-          grossPnlUsd: closed.trade.grossPnlUsd,
-          netPnlUsd: closed.trade.netPnlUsd,
-          holdMs: closed.trade.holdMs,
-          openReason: closed.trade.openReason,
-          closeReason: closed.trade.closeReason
-        });
+        const anchorStatus =
+          spreadEngine.getAnchorStatus(
+            ticker
+          );
 
-        await telegramNotifier.sendTradeClosed(closed.trade);
+        const closed =
+          paperExecution.onTicker(
+            ticker,
+            anchorStatus
+          );
 
-        logger.warn(
-          {
+        if (
+          closed &&
+          closed.action === "CLOSE"
+        ) {
+          await paperTradesWriter.appendRow({
+            event: "CLOSE",
             id: closed.trade.id,
             symbol: closed.trade.symbol,
             direction: closed.trade.direction,
-            entryPrice: closed.trade.entryPrice,
-            exitPrice: closed.trade.exitPrice,
-            netPnlPct: closed.trade.netPnlPct,
-            netPnlUsd: closed.trade.netPnlUsd,
-            closeReason: closed.trade.closeReason
-          },
-          "Paper trade closed"
-        );
+            status: closed.trade.status,
+            openedAt: closed.trade.openedAt,
+            closedAt: closed.trade.closedAt,
+            entryPrice:
+              closed.trade.entryPrice,
+            exitPrice:
+              closed.trade.exitPrice,
+            entryRef:
+              closed.trade.entryRef,
+            exitRef:
+              closed.trade.exitRef,
+            qtyUsd: closed.trade.qtyUsd,
+            qtyToken:
+              closed.trade.qtyToken,
+            dexAnchorAtEntry:
+              closed.trade.dexAnchorAtEntry,
+            dexAnchorAtExit:
+              closed.trade.dexAnchorAtExit,
+            entrySpreadPct:
+              closed.trade.entrySpreadPct,
+            exitSpreadPct:
+              closed.trade.exitSpreadPct,
+            grossPnlPct:
+              closed.trade.grossPnlPct,
+            netPnlPct:
+              closed.trade.netPnlPct,
+            grossPnlUsd:
+              closed.trade.grossPnlUsd,
+            netPnlUsd:
+              closed.trade.netPnlUsd,
+            holdMs: closed.trade.holdMs,
+            openReason:
+              closed.trade.openReason,
+            closeReason:
+              closed.trade.closeReason
+          });
+
+          await telegramNotifier.sendTradeClosed(
+            closed.trade
+          );
+
+          logger.warn(
+            {
+              id: closed.trade.id,
+              symbol: closed.trade.symbol,
+              direction:
+                closed.trade.direction,
+              entryPrice:
+                closed.trade.entryPrice,
+              exitPrice:
+                closed.trade.exitPrice,
+              netPnlPct:
+                closed.trade.netPnlPct,
+              netPnlUsd:
+                closed.trade.netPnlUsd,
+              closeReason:
+                closed.trade.closeReason
+            },
+            "Paper trade closed"
+          );
+        }
+      },
+
+      // ========== MEXC deals ==========
+
+      onDeal: async (
+        symbol,
+        payload
+      ) => {
+        await dealsWriter.appendRow({
+          timestamp: new Date().toISOString(),
+          symbol,
+          payload: JSON.stringify(payload)
+        });
+      },
+
+      // ========== MEXC depth ==========
+
+      onDepth: async (
+        symbol,
+        payload
+      ) => {
+        await depthWriter.appendRow({
+          timestamp: new Date().toISOString(),
+          symbol,
+          payload: JSON.stringify(payload)
+        });
       }
-    },
-    onDeal: async (symbol, payload) => {
-      await dealsWriter.appendRow({
-        timestamp: new Date().toISOString(),
-        symbol,
-        payload: JSON.stringify(payload)
-      });
-    },
-    onDepth: async (symbol, payload) => {
-      await depthWriter.appendRow({
-        timestamp: new Date().toISOString(),
-        symbol,
-        payload: JSON.stringify(payload)
-      });
-    }
-  });
+    });
+
+  // ========== Запуск сервисов ==========
 
   mexcWsClient.connect();
+
   await contractWatcher.start();
+
   dexPricePoller.start();
 
-  const shutdown = async (signal: string) => {
-    logger.info({ signal }, "Shutting down bot");
+  // ========== Graceful shutdown ==========
+
+  const shutdown = async (
+    signal: string
+  ): Promise<void> => {
+    logger.info(
+      { signal },
+      "Shutting down bot"
+    );
 
     dexPricePoller.stop();
     mexcWsClient.stop();
@@ -360,7 +596,13 @@ async function bootstrap(): Promise<void> {
   });
 }
 
+// ========== Запуск приложения ==========
+
 bootstrap().catch((error) => {
-  logger.error({ err: error }, "Bot crashed");
+  logger.error(
+    { err: error },
+    "Bot crashed"
+  );
+
   process.exit(1);
 });
