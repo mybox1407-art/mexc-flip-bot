@@ -217,6 +217,19 @@ async function bootstrap(): Promise<void> {
 
   const mexcWsClient = new MexcFuturesWsClient({
     onTicker: async (ticker: MexcTicker) => {
+      const mapping = dexMapper.get(ticker.symbol);
+      logger.info(
+        {
+          symbol: ticker.symbol,
+          hasMapping: !!mapping,
+          mappingStatus: mapping?.status,
+          mappingDexKey: mapping?.normalizedDexKey,
+          chainId: mapping?.chainId,
+          dexPairAddress: mapping?.dexPairAddress
+        },
+        "Ticker received"
+      );
+
       logger.info(
         {
           tickerSymbol: ticker.symbol,
