@@ -93,13 +93,11 @@ async function bootstrap(): Promise<void> {
       contractSize: contract.contractSize ?? ""
     });
 
-    // Нормализуем символ для сравнения с маппингом
     const normalizedSymbol = normalizeSymbol(contract.symbol);
 
-    // 1. Проверяем, есть ли уже маппинг
     const existing = dexMapper.get(contract.symbol);
     if (existing && existing.status === "active") {
-      logger.info(
+      logger.debug(
         {
           symbol: contract.symbol,
           normalizedSymbol,
@@ -112,27 +110,23 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // 2. Если это синтетика — вообще не ищем DEX
     if (shouldSkipDexLookup(contract.symbol)) {
       logger.info(
         { symbol: contract.symbol, displayName: contract.displayName, baseCoin: contract.baseCoin },
         "⛔ Skipping DEX lookup for unsupported synthetic contract"
       );
-      // Помечаем как not_found, чтобы не проверять каждый раз
       await dexMapper.markNotFound(contract.symbol, contract.baseCoin ?? "");
       return;
     }
 
-    // 3. Если уже помечен как not_found — тоже не ищем
     if (existing && existing.status === "not_found") {
-      logger.info(
+      logger.debug(
         { symbol: contract.symbol, mappedAt: existing.mappedAt },
         "⏭️ Mapping already marked as not_found, skipping DEX lookup"
       );
       return;
     }
 
-    // 4. Только теперь ищем DEX
     const searchQuery = contract.baseCoin ?? contract.symbol.split("_")[0] ?? contract.symbol;
     logger.info(
       { symbol: contract.symbol, baseCoin: contract.baseCoin, searchQuery },
@@ -150,7 +144,6 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // Вычисляем normalizedDexKey из пары
     const normalizedDexKey = normalizeSymbol(`${pair.baseSymbol}_${pair.quoteSymbol}`);
 
     dexMapper.upsert({
