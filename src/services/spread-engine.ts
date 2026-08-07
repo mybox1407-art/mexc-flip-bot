@@ -118,7 +118,7 @@ export class SpreadEngine {
     if (!anchor) {
       // Проверяем возраст mapping
       const mappingAgeMs = mapping.updatedAt
-        ? Date.now() - new Date(mapping.updatedAt).getTime()
+        ? Date.now() - new Date(mapping.mappedAt).getTime()
         : Infinity;
 
       // Если mapping свежий (< 30 секунд), считаем это нормальным и не шумим
