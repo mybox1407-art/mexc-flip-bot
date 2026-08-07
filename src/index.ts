@@ -101,6 +101,9 @@ async function bootstrap(): Promise<void> {
     "exitRef",
     "qtyUsd",
     "qtyToken",
+    "depositAtEntry",
+    "allocationPct",
+    "depositAfterClose",
     "dexAnchorAtEntry",
     "dexAnchorAtExit",
     "entrySpreadPct",
@@ -161,29 +164,47 @@ async function bootstrap(): Promise<void> {
 
   logger.info(
     {
+      initialDepositUsd: 100,
+      maxOpenTrades: 3,
+      tradeAllocationPct: 0.3,
+
+      currentDepositUsd:
+        paperExecution.getDepositUsd(),
+
+      openTrades:
+        paperExecution.getOpenTradesCount(),
+
       minSpreadPct: config.minSpreadPct,
       minNetEdgePct: config.minNetEdgePct,
+
       dexMinLiquidityUsd:
         config.dexMinLiquidityUsd,
+
       dexMinVolumeM5Usd:
         config.dexMinVolumeM5Usd,
+
       minMexcTurnover24h:
         config.minMexcTurnover24h,
-      paperTradeUsdSize:
-        config.paperTradeUsdSize,
+
       paperExitSpreadPct:
         config.paperExitSpreadPct,
+
       paperStopSpreadPct:
         config.paperStopSpreadPct,
+
       dexPreferredChains:
         config.dexPreferredChains,
-      dexPollMs: config.dexPollMs,
+
+      dexPollMs:
+        config.dexPollMs,
+
       telegramEnabled:
         telegramNotifier.enabled,
+
       activeMappings:
         dexMapper.getActive().length
     },
-    "Starting MEXC flip bot: DEX anchor + MEXC paper execution mode"
+    "Starting MEXC flip bot: DEX anchor + dynamic paper deposit"
   );
 
   // Тикеры, которые были обработаны
@@ -386,7 +407,11 @@ async function bootstrap(): Promise<void> {
               mexcBid: signal.mexcBid,
               mexcAsk: signal.mexcAsk,
               entryRef: signal.entryRef,
-              reason: signal.reason
+              reason: signal.reason,
+              currentDepositUsd:
+                paperExecution.getDepositUsd(),
+              openTrades:
+                paperExecution.getOpenTradesCount()
             },
             "DEX anchor deviation signal detected on MEXC"
           );
@@ -406,17 +431,33 @@ async function bootstrap(): Promise<void> {
               symbol: opened.trade.symbol,
               direction: opened.trade.direction,
               status: opened.trade.status,
+
               openedAt: opened.trade.openedAt,
+
               entryPrice:
                 opened.trade.entryPrice,
-              entryRef: opened.trade.entryRef,
-              qtyUsd: opened.trade.qtyUsd,
+
+              entryRef:
+                opened.trade.entryRef,
+
+              qtyUsd:
+                opened.trade.qtyUsd,
+
               qtyToken:
                 opened.trade.qtyToken,
+
+              depositAtEntry:
+                opened.trade.depositAtEntry,
+
+              allocationPct:
+                opened.trade.allocationPct,
+
               dexAnchorAtEntry:
                 opened.trade.dexAnchorAtEntry,
+
               entrySpreadPct:
                 opened.trade.entrySpreadPct,
+
               openReason:
                 opened.trade.openReason
             });
@@ -431,11 +472,27 @@ async function bootstrap(): Promise<void> {
                 symbol: opened.trade.symbol,
                 direction:
                   opened.trade.direction,
+
                 entryPrice:
                   opened.trade.entryPrice,
-                qtyUsd: opened.trade.qtyUsd,
+
+                qtyUsd:
+                  opened.trade.qtyUsd,
+
                 qtyToken:
-                  opened.trade.qtyToken
+                  opened.trade.qtyToken,
+
+                depositAtEntry:
+                  opened.trade.depositAtEntry,
+
+                allocationPct:
+                  opened.trade.allocationPct,
+
+                currentDepositUsd:
+                  paperExecution.getDepositUsd(),
+
+                openTrades:
+                  paperExecution.getOpenTradesCount()
               },
               "Paper trade opened"
             );
@@ -465,38 +522,70 @@ async function bootstrap(): Promise<void> {
             symbol: closed.trade.symbol,
             direction: closed.trade.direction,
             status: closed.trade.status,
-            openedAt: closed.trade.openedAt,
-            closedAt: closed.trade.closedAt,
+
+            openedAt:
+              closed.trade.openedAt,
+
+            closedAt:
+              closed.trade.closedAt,
+
             entryPrice:
               closed.trade.entryPrice,
+
             exitPrice:
               closed.trade.exitPrice,
+
             entryRef:
               closed.trade.entryRef,
+
             exitRef:
               closed.trade.exitRef,
-            qtyUsd: closed.trade.qtyUsd,
+
+            qtyUsd:
+              closed.trade.qtyUsd,
+
             qtyToken:
               closed.trade.qtyToken,
+
+            depositAtEntry:
+              closed.trade.depositAtEntry,
+
+            allocationPct:
+              closed.trade.allocationPct,
+
+            depositAfterClose:
+              closed.trade.depositAfterClose,
+
             dexAnchorAtEntry:
               closed.trade.dexAnchorAtEntry,
+
             dexAnchorAtExit:
               closed.trade.dexAnchorAtExit,
+
             entrySpreadPct:
               closed.trade.entrySpreadPct,
+
             exitSpreadPct:
               closed.trade.exitSpreadPct,
+
             grossPnlPct:
               closed.trade.grossPnlPct,
+
             netPnlPct:
               closed.trade.netPnlPct,
+
             grossPnlUsd:
               closed.trade.grossPnlUsd,
+
             netPnlUsd:
               closed.trade.netPnlUsd,
-            holdMs: closed.trade.holdMs,
+
+            holdMs:
+              closed.trade.holdMs,
+
             openReason:
               closed.trade.openReason,
+
             closeReason:
               closed.trade.closeReason
           });
@@ -511,14 +600,37 @@ async function bootstrap(): Promise<void> {
               symbol: closed.trade.symbol,
               direction:
                 closed.trade.direction,
+
               entryPrice:
                 closed.trade.entryPrice,
+
               exitPrice:
                 closed.trade.exitPrice,
+
+              grossPnlPct:
+                closed.trade.grossPnlPct,
+
               netPnlPct:
                 closed.trade.netPnlPct,
+
+              grossPnlUsd:
+                closed.trade.grossPnlUsd,
+
               netPnlUsd:
                 closed.trade.netPnlUsd,
+
+              depositAtEntry:
+                closed.trade.depositAtEntry,
+
+              depositAfterClose:
+                closed.trade.depositAfterClose,
+
+              currentDepositUsd:
+                paperExecution.getDepositUsd(),
+
+              openTrades:
+                paperExecution.getOpenTradesCount(),
+
               closeReason:
                 closed.trade.closeReason
             },
@@ -568,7 +680,13 @@ async function bootstrap(): Promise<void> {
     signal: string
   ): Promise<void> => {
     logger.info(
-      { signal },
+      {
+        signal,
+        finalDepositUsd:
+          paperExecution.getDepositUsd(),
+        openTrades:
+          paperExecution.getOpenTradesCount()
+      },
       "Shutting down bot"
     );
 
@@ -600,7 +718,9 @@ async function bootstrap(): Promise<void> {
 
 bootstrap().catch((error) => {
   logger.error(
-    { err: error },
+    {
+      err: error
+    },
     "Bot crashed"
   );
 
