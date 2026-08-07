@@ -66,24 +66,8 @@ export class SpreadEngine {
     const now = Date.now();
     const normalized = normalizeSymbol(symbol);
 
-    // Получаем маппинг для этого символа
     const mapping = this.dexMapper.get(symbol);
-
-    // Если есть явный ключ для DEX — используем его
     const snapshotKey = mapping?.normalizedDexKey ?? normalized;
-
-    logger.info(
-      {
-        symbol,
-        normalized,
-        snapshotKey,
-        mappingDexKey: mapping?.normalizedDexKey,
-        dexId: pair.dexId,
-        chainId: pair.chainId,
-        snapshotKeysBefore: Array.from(this.dexSnapshots.keys())
-      },
-      "updateDexPrice called"
-    );
 
     this.dexSnapshots.set(snapshotKey, {
       ...pair,
@@ -99,44 +83,35 @@ export class SpreadEngine {
     logger.info(
       {
         symbol,
-        normalized,
         snapshotKey,
         price: pair.priceUsd.toFixed(6),
-        liquidity: pair.liquidityUsd.toFixed(0),
-        snapshotKeysAfter: Array.from(this.dexSnapshots.keys())
+        liquidity: pair.liquidityUsd.toFixed(0)
       },
-      "DEX price updated"
+      "DEX snapshot saved"
     );
   }
 
   getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
     const normalized = normalizeSymbol(ticker.symbol);
-
-    // Получаем маппинг для этого символа
     const mapping = this.dexMapper.get(ticker.symbol);
-
-    // Если есть явный ключ для DEX — используем его
     const snapshotKey = mapping?.normalizedDexKey ?? normalized;
 
     const anchor = this.dexSnapshots.get(snapshotKey);
 
-    logger.info(
-      {
-        tickerSymbol: ticker.symbol,
-        normalized,
-        snapshotKey,
-        mappingDexKey: mapping?.normalizedDexKey,
-        hasAnchor: !!anchor,
-        snapshotKeys: Array.from(this.dexSnapshots.keys()),
-        lookingFor: snapshotKey,
-        mappingStatus: mapping?.status,
-        mappingChainId: mapping?.chainId,
-        mappingDexPairAddress: mapping?.dexPairAddress
-      },
-      "getAnchorStatus called"
-    );
-
     if (!anchor) {
+      logger.info(
+        {
+          tickerSymbol: ticker.symbol,
+          snapshotKey,
+          mappingDexKey: mapping?.normalizedDexKey,
+          hasAnchor: false,
+          snapshotKeysCount: this.dexSnapshots.size,
+          mappingStatus: mapping?.status,
+          mappingChainId: mapping?.chainId,
+          mappingDexPairAddress: mapping?.dexPairAddress
+        },
+        "⚠️ No anchor for ticker"
+      );
       return null;
     }
 
@@ -163,18 +138,6 @@ export class SpreadEngine {
     const longSpreadPct = ((anchor.priceUsd - mexcAsk) / mexcAsk) * 100;
     const shortSpreadPct = ((mexcBid - anchor.priceUsd) / mexcBid) * 100;
 
-    logger.info(
-      {
-        symbol: ticker.symbol,
-        snapshotKey,
-        dexPrice: anchor.priceUsd.toFixed(6),
-        mexcBid: mexcBid.toFixed(6),
-        mexcAsk: mexcAsk.toFixed(6),
-        anchorAgeMs
-      },
-      "Anchor status resolved"
-    );
-
     return {
       symbol: ticker.symbol,
       dexPrice: anchor.priceUsd,
@@ -199,42 +162,11 @@ export class SpreadEngine {
   }
 
   evaluate(ticker: MexcTicker): FlipSignal | null {
-    logger.info(
-      {
-        symbol: ticker.symbol,
-        normalized: normalizeSymbol(ticker.symbol)
-      },
-      "evaluate() called"
-    );
-
     const status = this.getAnchorStatus(ticker);
     
     if (!status) {
-      logger.debug(
-        {
-          symbol: ticker.symbol,
-          normalized: normalizeSymbol(ticker.symbol)
-        },
-        "No DEX anchor for symbol"
-      );
       return null;
     }
-
-    logger.info(
-      {
-        symbol: ticker.symbol,
-        dexPrice: status.dexPrice.toFixed(6),
-        mexcBid: status.mexcBid.toFixed(6),
-        mexcAsk: status.mexcAsk.toFixed(6),
-        mexcLast: status.mexcLast.toFixed(6),
-        longSpreadPct: status.longSpreadPct.toFixed(3),
-        shortSpreadPct: status.shortSpreadPct.toFixed(3),
-        anchorAgeMs: status.anchorAgeMs,
-        dexLiquidityUsd: status.dexLiquidityUsd.toFixed(0),
-        mexcTurnover24h: status.mexcTurnover24h.toFixed(0)
-      },
-      "📊 Spread calculated"
-    );
 
     if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
       logger.warn(
@@ -338,15 +270,6 @@ export class SpreadEngine {
       entryRef = "BID";
       reason = "MEXC above DEX anchor";
     } else {
-      logger.debug(
-        {
-          symbol: ticker.symbol,
-          longSpread: status.longSpreadPct.toFixed(3),
-          shortSpread: status.shortSpreadPct.toFixed(3),
-          minSpread: config.minSpreadPct
-        },
-        "❌ Both spreads too small"
-      );
       state.lastDirection = undefined;
       state.confirmCount = 0;
       return null;
@@ -360,15 +283,6 @@ export class SpreadEngine {
     }
 
     if (state.confirmCount < config.signalConfirmTicks) {
-      logger.info(
-        {
-          symbol: ticker.symbol,
-          direction,
-          confirmCount: state.confirmCount,
-          requiredTicks: config.signalConfirmTicks
-        },
-        "⏳ Waiting for confirm ticks"
-      );
       return null;
     }
 
