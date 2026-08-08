@@ -26,6 +26,7 @@ interface MexcWsHandlers {
 
 export class MexcFuturesWsClient {
   private ws: WebSocket | null = null;
+
   private reconnectTimer:
     NodeJS.Timeout | null = null;
 
@@ -117,11 +118,10 @@ export class MexcFuturesWsClient {
       symbol
     );
 
-    this.send({
-      method: "sub.ticker",
-      param: { symbol },
-      gzip: false
-    });
+    this.sendSubscription(
+      "sub.ticker",
+      { symbol }
+    );
 
     logger.info(
       { symbol },
@@ -156,6 +156,10 @@ export class MexcFuturesWsClient {
 
         this.startPing();
 
+        /**
+         * Общий поток используется
+         * только для обнаружения символов.
+         */
         this.send({
           method: "sub.tickers",
           param: {},
@@ -178,6 +182,21 @@ export class MexcFuturesWsClient {
         ) {
           this.sendSubscription(
             "sub.depth",
+            { symbol }
+          );
+        }
+
+        /**
+         * После reconnect обязательно
+         * восстанавливаем индивидуальные
+         * ticker-подписки.
+         */
+        for (
+          const symbol
+          of this.subscribedTickers
+        ) {
+          this.sendSubscription(
+            "sub.ticker",
             { symbol }
           );
         }
@@ -411,6 +430,14 @@ export class MexcFuturesWsClient {
       return;
     }
 
+    /**
+     * push.tickers используется
+     * только для discovery символов.
+     *
+     * Здесь нельзя вызывать onTicker(),
+     * потому что в этом потоке
+     * bid1/ask1 отсутствуют.
+     */
     if (
       channel === "push.tickers" &&
       Array.isArray(data)
@@ -418,15 +445,15 @@ export class MexcFuturesWsClient {
       for (
         const row of data
       ) {
-        const ticker =
-          this.toTicker(row);
+        const symbol =
+          String(row.symbol ?? "");
 
-        if (!ticker) {
+        if (!symbol) {
           continue;
         }
 
         this.subscribeTicker(
-          ticker.symbol
+          symbol
         );
 
         this.tickerCount += 1;
@@ -440,13 +467,31 @@ export class MexcFuturesWsClient {
               count:
                 this.tickerCount,
 
-              symbol:
-                ticker.symbol
+              symbol
             },
-            "Tickers processed"
+            "Ticker symbols discovered"
           );
         }
+      }
 
+      return;
+    }
+
+    /**
+     * Только push.ticker содержит
+     * индивидуальные данные инструмента.
+     */
+    if (
+      channel === "push.ticker" &&
+      data &&
+      !Array.isArray(data)
+    ) {
+      const ticker =
+        this.tickerFromPushTicker(
+          data
+        );
+
+      if (ticker) {
         if (
           !this.firstTickerLogged
         ) {
@@ -464,32 +509,13 @@ export class MexcFuturesWsClient {
               ask1:
                 ticker.ask1
             },
-            "First ticker received"
+            "First valid ticker received"
           );
 
           this.firstTickerLogged =
             true;
         }
 
-        this.handlers.onTicker(
-          ticker
-        );
-      }
-
-      return;
-    }
-
-    if (
-      channel === "push.ticker" &&
-      data &&
-      !Array.isArray(data)
-    ) {
-      const ticker =
-        this.tickerFromPushTicker(
-          data
-        );
-
-      if (ticker) {
         this.handlers.onTicker(
           ticker
         );
@@ -530,127 +556,6 @@ export class MexcFuturesWsClient {
     }
   }
 
-  private toTicker(
-    row: JsonRecord
-  ): MexcTicker | null {
-    const symbol =
-      String(row.symbol ?? "");
-
-    if (!symbol) {
-      return null;
-    }
-
-    const lastPrice =
-      Number(row.lastPrice ?? 0);
-
-    const bid1 =
-      Number(row.bid1 ?? 0);
-
-    const ask1 =
-      Number(row.ask1 ?? 0);
-
-    if (
-      !Number.isFinite(lastPrice) ||
-      lastPrice <= 0
-    ) {
-      logger.warn(
-        {
-          symbol,
-          lastPrice,
-          rawLastPrice:
-            row.lastPrice
-        },
-        "Invalid MEXC ticker last price"
-      );
-
-      return null;
-    }
-
-    if (
-      !Number.isFinite(bid1) ||
-      bid1 <= 0 ||
-      !Number.isFinite(ask1) ||
-      ask1 <= 0 ||
-      ask1 < bid1
-    ) {
-      logger.warn(
-        {
-          symbol,
-          lastPrice,
-          rawBid1:
-            row.bid1,
-          rawAsk1:
-            row.ask1,
-          bid1,
-          ask1
-        },
-        "Invalid MEXC ticker order book"
-      );
-
-      return null;
-    }
-
-    return {
-      symbol,
-
-      timestamp:
-        Number(
-          row.timestamp ??
-          Date.now()
-        ),
-
-      lastPrice,
-
-      volume24:
-        Number(
-          row.volume24 ?? 0
-        ),
-
-      amount24:
-        Number(
-          row.amount24 ?? 0
-        ),
-
-      riseFallRate:
-        Number(
-          row.riseFallRate ?? 0
-        ),
-
-      fairPrice:
-        Number(
-          row.fairPrice ?? 0
-        ),
-
-      indexPrice:
-        Number(
-          row.indexPrice ?? 0
-        ),
-
-      maxBidPrice:
-        Number(
-          row.maxBidPrice ?? 0
-        ),
-
-      minAskPrice:
-        Number(
-          row.minAskPrice ?? 0
-        ),
-
-      lower24Price:
-        Number(
-          row.lower24Price ?? 0
-        ),
-
-      high24Price:
-        Number(
-          row.high24Price ?? 0
-        ),
-
-      bid1,
-      ask1
-    };
-  }
-
   private tickerFromPushTicker(
     data: JsonRecord
   ): MexcTicker | null {
@@ -664,6 +569,13 @@ export class MexcFuturesWsClient {
     const lastPrice =
       Number(data.lastPrice ?? 0);
 
+    /**
+     * Никакого fallback на lastPrice.
+     *
+     * Если MEXC не передал bid/ask,
+     * этот ticker нельзя использовать
+     * для торговли.
+     */
     const bid1 =
       Number(data.bid1 ?? 0);
 
