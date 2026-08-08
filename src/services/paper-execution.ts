@@ -75,13 +75,6 @@ export class PaperExecutionService {
     return config.roundTripCostPct;
   }
 
-  /**
-   * Расчёт приблизительной DEX-цены.
-   *
-   * Для flip-стратегии DEX используется
-   * только как ценовой якорь.
-   * Никаких покупок/продаж на DEX не происходит.
-   */
   private estimateExecutableDexPrice(
     anchor: AnchorStatus,
     qtyUsd: number,
@@ -322,6 +315,15 @@ export class PaperExecutionService {
           ? "ASK"
           : "BID",
 
+      entryMexcBid:
+        signal.mexcBid,
+
+      entryMexcAsk:
+        signal.mexcAsk,
+
+      entryMexcBookSpreadPct:
+        signal.mexcBookSpreadPct,
+
       qtyUsd:
         round(qtyUsd, 2),
 
@@ -362,15 +364,31 @@ export class PaperExecutionService {
         id: trade.id,
         symbol: trade.symbol,
         direction: trade.direction,
-        entryPrice: trade.entryPrice,
+
+        entryPrice:
+          trade.entryPrice,
+
+        entryMexcBid:
+          trade.entryMexcBid,
+
+        entryMexcAsk:
+          trade.entryMexcAsk,
+
+        entryMexcBookSpreadPct:
+          trade.entryMexcBookSpreadPct,
+
         qtyUsd: trade.qtyUsd,
         qtyToken: trade.qtyToken,
+
         depositAtEntry:
           trade.depositAtEntry,
+
         allocationPct:
           trade.allocationPct,
+
         dexAnchorAtEntry:
           trade.dexAnchorAtEntry,
+
         entrySpreadPct:
           trade.entrySpreadPct
       },
@@ -419,12 +437,41 @@ export class PaperExecutionService {
       now - openedAt
     );
 
+    const exitBid =
+      Number(ticker.bid1);
+
+    const exitAsk =
+      Number(ticker.ask1);
+
+    const exitMid =
+      (
+        exitBid +
+        exitAsk
+      ) / 2;
+
+    const exitBookSpreadPct =
+      Number.isFinite(exitBid) &&
+      Number.isFinite(exitAsk) &&
+      exitBid > 0 &&
+      exitAsk > 0 &&
+      Number.isFinite(exitMid) &&
+      exitMid > 0
+        ? (
+            (exitAsk - exitBid) /
+            exitMid
+          ) * 100
+        : undefined;
+
     const exitPrice =
       trade.direction === "LONG"
-        ? Number(ticker.bid1)
-        : Number(ticker.ask1);
+        ? exitBid
+        : exitAsk;
 
     if (
+      !Number.isFinite(exitBid) ||
+      exitBid <= 0 ||
+      !Number.isFinite(exitAsk) ||
+      exitAsk <= 0 ||
       !Number.isFinite(exitPrice) ||
       exitPrice <= 0
     ) {
@@ -432,9 +479,12 @@ export class PaperExecutionService {
         {
           symbol: ticker.symbol,
           tradeId: trade.id,
-          exitPrice
+          exitBid,
+          exitAsk,
+          exitPrice,
+          exitBookSpreadPct
         },
-        "Invalid paper exit price"
+        "Invalid paper exit book"
       );
 
       return null;
@@ -508,18 +558,10 @@ export class PaperExecutionService {
       anchor.anchorAgeMs <=
         config.maxDexAnchorAgeMs;
 
-    /**
-     * Stale anchor не используется
-     * для закрытия существующей позиции.
-     *
-     * Он только отключает:
-     * - mean reversion exit;
-     * - liquidity drop check;
-     * - обновление текущего DEX spread.
-     *
-     * Stop-loss и timeout продолжают работать.
-     */
-    if (anchor && anchorIsFresh) {
+    if (
+      anchor &&
+      anchorIsFresh
+    ) {
       const freshDexPrice =
         this.estimateExecutableDexPrice(
           anchor,
@@ -608,7 +650,6 @@ export class PaperExecutionService {
       );
     }
 
-    // Stop-loss имеет наивысший приоритет.
     if (
       netPnlPct <=
       -config.paperStopLossPct
@@ -637,7 +678,6 @@ export class PaperExecutionService {
       return null;
     }
 
-    // Защита от повторного закрытия.
     this.processedCloseTrades.add(
       trade.id
     );
@@ -670,6 +710,15 @@ export class PaperExecutionService {
         trade.direction === "LONG"
           ? "BID"
           : "ASK",
+
+      exitMexcBid:
+        exitBid,
+
+      exitMexcAsk:
+        exitAsk,
+
+      exitMexcBookSpreadPct:
+        exitBookSpreadPct,
 
       dexAnchorAtExit:
         anchorIsFresh &&
@@ -732,8 +781,26 @@ export class PaperExecutionService {
         entryPrice:
           closedTrade.entryPrice,
 
+        entryMexcBid:
+          closedTrade.entryMexcBid,
+
+        entryMexcAsk:
+          closedTrade.entryMexcAsk,
+
+        entryMexcBookSpreadPct:
+          closedTrade.entryMexcBookSpreadPct,
+
         exitPrice:
           closedTrade.exitPrice,
+
+        exitMexcBid:
+          closedTrade.exitMexcBid,
+
+        exitMexcAsk:
+          closedTrade.exitMexcAsk,
+
+        exitMexcBookSpreadPct:
+          closedTrade.exitMexcBookSpreadPct,
 
         grossPnlPct:
           closedTrade.grossPnlPct,
