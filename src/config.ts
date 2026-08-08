@@ -77,9 +77,10 @@ export const config = {
     "https://api.mexc.com"
   ),
 
+  // ✅ FIX #3: Новый MEXC WebSocket endpoint
   mexcWsUrl: requireEnv(
     "MEXC_WS_URL",
-    "wss://contract.mexc.com/edge"
+    "wss://wbs-api.mexc.com/ws"
   ),
 
   telegramBotToken:
@@ -123,9 +124,10 @@ export const config = {
     20
   ),
 
+  // ✅ FIX #9: Уменьшено с 400 до 200
   startupBackfillLimit: numberEnv(
     "STARTUP_BACKFILL_LIMIT",
-    400
+    200
   ),
 
   startupLookbackHours: numberEnv(
@@ -258,7 +260,6 @@ export const config = {
     0.12
   ),
 
-  // Оставлены для обратной совместимости.
   assumedFeesPct: numberEnv(
     "ASSUMED_FEES_PCT",
     0.064
@@ -331,9 +332,10 @@ export const config = {
       2.0
     ),
 
+  // ✅ FIX #12: Увеличено с 50 до 75
   paperMaxLiquidityDropPct:
     numberEnv(
       "PAPER_MAX_LIQUIDITY_DROP_PCT",
-      50
+      75
     )
 } as const;
