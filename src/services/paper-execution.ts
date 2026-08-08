@@ -76,9 +76,10 @@ export class PaperExecutionService {
   }
 
   /**
-   * Расчёт приблизительной исполняемой DEX-цены.
+   * Расчёт приблизительной DEX-цены.
    *
-   * Для flip-стратегии DEX используется только как ценовой якорь.
+   * Для flip-стратегии DEX используется
+   * только как ценовой якорь.
    * Никаких покупок/продаж на DEX не происходит.
    */
   private estimateExecutableDexPrice(
@@ -86,7 +87,9 @@ export class PaperExecutionService {
     qtyUsd: number,
     direction: "LONG" | "SHORT"
   ): number {
-    // ✅ FIX #2: Возвращаем DEX-цену напрямую без price impact
+    void qtyUsd;
+    void direction;
+
     if (
       !Number.isFinite(
         anchor.dexPrice
@@ -500,8 +503,24 @@ export class PaperExecutionService {
       | number
       | undefined;
 
-    if (anchor) {
-      currentDexPrice =
+    const anchorIsFresh =
+      anchor !== null &&
+      anchor.anchorAgeMs <=
+        config.maxDexAnchorAgeMs;
+
+    /**
+     * Stale anchor не используется
+     * для закрытия существующей позиции.
+     *
+     * Он только отключает:
+     * - mean reversion exit;
+     * - liquidity drop check;
+     * - обновление текущего DEX spread.
+     *
+     * Stop-loss и timeout продолжают работать.
+     */
+    if (anchor && anchorIsFresh) {
+      const freshDexPrice =
         this.estimateExecutableDexPrice(
           anchor,
           trade.qtyUsd,
@@ -509,36 +528,41 @@ export class PaperExecutionService {
         );
 
       if (
-        Number.isFinite(
-          currentDexPrice
-        ) &&
-        currentDexPrice > 0
+        Number.isFinite(freshDexPrice) &&
+        freshDexPrice > 0
       ) {
-        const anchorMovePct =
-          (
-            (currentDexPrice -
-              trade.dexAnchorAtEntry) /
-            trade.dexAnchorAtEntry
-          ) * 100;
+        currentDexPrice =
+          freshDexPrice;
 
-        // ✅ FIX #11: Удалена проверка anchor_moved_against_position
-        // const movedAgainst = ...
-        // if (movedAgainst) {
-        //   closeReason = "anchor_moved_against_position";
-        // }
+        const currentMexcBid =
+          Number(ticker.bid1);
 
-        currentSpreadPct =
-          trade.direction === "LONG"
-            ? (
-                (currentDexPrice -
-                  anchor.mexcAsk) /
-                anchor.mexcAsk
-              ) * 100
-            : (
-                (anchor.mexcBid -
-                  currentDexPrice) /
-                anchor.mexcBid
-              ) * 100;
+        const currentMexcAsk =
+          Number(ticker.ask1);
+
+        if (
+          Number.isFinite(
+            currentMexcBid
+          ) &&
+          currentMexcBid > 0 &&
+          Number.isFinite(
+            currentMexcAsk
+          ) &&
+          currentMexcAsk > 0
+        ) {
+          currentSpreadPct =
+            trade.direction === "LONG"
+              ? (
+                  (freshDexPrice -
+                    currentMexcAsk) /
+                  currentMexcAsk
+                ) * 100
+              : (
+                  (currentMexcBid -
+                    freshDexPrice) /
+                  currentMexcBid
+                ) * 100;
+        }
       }
 
       const entryLiquidity =
@@ -547,11 +571,13 @@ export class PaperExecutionService {
         );
 
       if (
-        Number.isFinite(
-          entryLiquidity
-        ) &&
+        Number.isFinite(entryLiquidity) &&
         entryLiquidity !== undefined &&
-        entryLiquidity > 0
+        entryLiquidity > 0 &&
+        Number.isFinite(
+          anchor.dexLiquidityUsd
+        ) &&
+        anchor.dexLiquidityUsd > 0
       ) {
         const liquidityDropPct =
           (
@@ -568,14 +594,18 @@ export class PaperExecutionService {
             "liquidity_drop";
         }
       }
-
-      if (
-        anchor.anchorAgeMs >
-        config.maxDexAnchorAgeMs
-      ) {
-        closeReason =
-          "anchor_stale";
-      }
+    } else if (anchor) {
+      logger.debug(
+        {
+          symbol: ticker.symbol,
+          tradeId: trade.id,
+          anchorAgeMs:
+            anchor.anchorAgeMs,
+          maxAnchorAgeMs:
+            config.maxDexAnchorAgeMs
+        },
+        "Stale DEX anchor ignored for open trade"
+      );
     }
 
     // Stop-loss имеет наивысший приоритет.
@@ -642,11 +672,15 @@ export class PaperExecutionService {
           : "ASK",
 
       dexAnchorAtExit:
-        currentDexPrice ??
-        trade.dexAnchorAtEntry,
+        anchorIsFresh &&
+        currentDexPrice !== undefined
+          ? currentDexPrice
+          : trade.dexAnchorAtEntry,
 
       dexSnapshotAtExit:
-        anchor?.dexUpdatedAt,
+        anchorIsFresh
+          ? anchor?.dexUpdatedAt
+          : undefined,
 
       exitSpreadPct:
         currentSpreadPct !== undefined
@@ -721,6 +755,11 @@ export class PaperExecutionService {
         depositAfterClose,
 
         holdMs,
+
+        anchorAgeMs:
+          anchor?.anchorAgeMs,
+
+        anchorIsFresh,
 
         closeReason
       },
