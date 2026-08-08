@@ -21,6 +21,8 @@ export class MexcFuturesWsClient {
   private firstTickerLogged = false;
   private pingCount = 0;
   private tickerCount = 0;
+  // ✅ FIX #4: Отслеживаем время подключения
+  private connectionOpenedAt: number = 0;
 
   private readonly subscribedDeals = new Set<string>();
   private readonly subscribedDepths = new Set<string>();
@@ -74,6 +76,8 @@ export class MexcFuturesWsClient {
   private openConnection(): void {
     logger.info({ url: config.mexcWsUrl }, "Connecting to MEXC Futures WebSocket");
 
+    // ✅ FIX #4: Записываем время подключения
+    this.connectionOpenedAt = Date.now();
     this.ws = new WebSocket(config.mexcWsUrl);
 
     this.ws.on("open", () => {
@@ -123,13 +127,23 @@ export class MexcFuturesWsClient {
       clearInterval(this.pingTimer);
     }
 
+    // ✅ FIX #15: Ping каждые 30 сек вместо 10
     this.pingTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.send({ method: "ping" });
         this.pingCount++;
         logger.info({ count: this.pingCount }, "Ping sent");
       }
-    }, 10_000);
+    }, 30_000);
+
+    // ✅ FIX #4: Принудительный reconnect каждые 23 часа
+    setTimeout(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        logger.info("Forced reconnect: 23h TTL reached");
+        this.ws?.close();
+        this.openConnection();
+      }
+    }, 23 * 60 * 60 * 1000);
   }
 
   private stopPing(): void {
@@ -241,6 +255,7 @@ export class MexcFuturesWsClient {
     }
   }
 
+  // ✅ FIX #7: Извлекаем bid1/ask1 из ответа
   private toTicker(row: JsonRecord): MexcTicker | null {
     const symbol = String(row.symbol ?? "");
 
@@ -249,6 +264,8 @@ export class MexcFuturesWsClient {
     }
 
     const lastPrice = Number(row.lastPrice ?? 0);
+    const bid1 = Number(row.bid1 ?? row.lastPrice ?? 0);  // ✅
+    const ask1 = Number(row.ask1 ?? row.lastPrice ?? 0);  // ✅
 
     return {
       symbol,
@@ -263,8 +280,8 @@ export class MexcFuturesWsClient {
       minAskPrice: Number(row.minAskPrice ?? 0),
       lower24Price: Number(row.lower24Price ?? 0),
       high24Price: Number(row.high24Price ?? 0),
-      bid1: lastPrice,
-      ask1: lastPrice
+      bid1,  // ✅
+      ask1   // ✅
     };
   }
 
