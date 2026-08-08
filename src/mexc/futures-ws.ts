@@ -103,28 +103,48 @@ export class MexcFuturesWsClient {
     );
   }
 
-  private subscribeTicker(
+  /**
+   * Публичная подписка на индивидуальный
+   * ticker конкретного MEXC-контракта.
+   *
+   * Вызывается только для символов,
+   * у которых есть active DEX mapping.
+   */
+  subscribeTicker(
     symbol: string
   ): void {
+    const normalizedSymbol =
+      String(symbol).trim();
+
+    if (!normalizedSymbol) {
+      return;
+    }
+
     if (
       this.subscribedTickers.has(
-        symbol
+        normalizedSymbol
       )
     ) {
       return;
     }
 
     this.subscribedTickers.add(
-      symbol
+      normalizedSymbol
     );
 
     this.sendSubscription(
       "sub.ticker",
-      { symbol }
+      {
+        symbol:
+          normalizedSymbol
+      }
     );
 
     logger.info(
-      { symbol },
+      {
+        symbol:
+          normalizedSymbol
+      },
       "Subscribed to push.ticker"
     );
   }
@@ -158,7 +178,10 @@ export class MexcFuturesWsClient {
 
         /**
          * Общий поток используется
-         * только для обнаружения символов.
+         * только для discovery символов.
+         *
+         * Он не передаёт сделки
+         * в onTicker().
          */
         this.send({
           method: "sub.tickers",
@@ -187,9 +210,9 @@ export class MexcFuturesWsClient {
         }
 
         /**
-         * После reconnect обязательно
-         * восстанавливаем индивидуальные
-         * ticker-подписки.
+         * Восстанавливаем только те
+         * индивидуальные ticker-подписки,
+         * которые были добавлены извне.
          */
         for (
           const symbol
@@ -431,12 +454,16 @@ export class MexcFuturesWsClient {
     }
 
     /**
-     * push.tickers используется
-     * только для discovery символов.
+     * Общий push.tickers используется
+     * только для discovery.
      *
-     * Здесь нельзя вызывать onTicker(),
-     * потому что в этом потоке
-     * bid1/ask1 отсутствуют.
+     * Нельзя:
+     * - создавать MexcTicker из row;
+     * - вызывать onTicker();
+     * - подписываться на каждый символ.
+     *
+     * Иначе бот подпишется на тысячи
+     * контрактов, включая ненужные.
      */
     if (
       channel === "push.tickers" &&
@@ -451,10 +478,6 @@ export class MexcFuturesWsClient {
         if (!symbol) {
           continue;
         }
-
-        this.subscribeTicker(
-          symbol
-        );
 
         this.tickerCount += 1;
 
@@ -478,8 +501,8 @@ export class MexcFuturesWsClient {
     }
 
     /**
-     * Только push.ticker содержит
-     * индивидуальные данные инструмента.
+     * Только индивидуальный push.ticker
+     * передаётся в торговую логику.
      */
     if (
       channel === "push.ticker" &&
@@ -570,11 +593,9 @@ export class MexcFuturesWsClient {
       Number(data.lastPrice ?? 0);
 
     /**
-     * Никакого fallback на lastPrice.
-     *
-     * Если MEXC не передал bid/ask,
-     * этот ticker нельзя использовать
-     * для торговли.
+     * Fallback на lastPrice запрещён.
+     * Без реальных bid1/ask1 торговый ticker
+     * не передаётся в торговую логику.
      */
     const bid1 =
       Number(data.bid1 ?? 0);
@@ -610,10 +631,13 @@ export class MexcFuturesWsClient {
         {
           symbol,
           lastPrice,
+
           rawBid1:
             data.bid1,
+
           rawAsk1:
             data.ask1,
+
           bid1,
           ask1
         },
