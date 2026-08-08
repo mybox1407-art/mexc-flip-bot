@@ -61,16 +61,6 @@ function shouldSkipDexLookup(
     return true;
   }
 
-  /**
-   * Не блокируем символы с числовым
-   * префиксом:
-   *
-   * 1000PEPE
-   * 1000SHIB
-   * 1000000BABYDOGE
-   *
-   * Для них отдельно нужен multiplier.
-   */
   return false;
 }
 
@@ -146,7 +136,13 @@ async function bootstrap(): Promise<void> {
     "entryPrice",
     "exitPrice",
     "entryRef",
+    "entryMexcBid",
+    "entryMexcAsk",
+    "entryMexcBookSpreadPct",
     "exitRef",
+    "exitMexcBid",
+    "exitMexcAsk",
+    "exitMexcBookSpreadPct",
     "qtyUsd",
     "qtyToken",
     "depositAtEntry",
@@ -675,6 +671,15 @@ async function bootstrap(): Promise<void> {
               entryRef:
                 opened.trade.entryRef,
 
+              entryMexcBid:
+                opened.trade.entryMexcBid,
+
+              entryMexcAsk:
+                opened.trade.entryMexcAsk,
+
+              entryMexcBookSpreadPct:
+                opened.trade.entryMexcBookSpreadPct,
+
               qtyUsd:
                 opened.trade.qtyUsd,
 
@@ -717,6 +722,15 @@ async function bootstrap(): Promise<void> {
 
                 entryPrice:
                   opened.trade.entryPrice,
+
+                entryMexcBid:
+                  opened.trade.entryMexcBid,
+
+                entryMexcAsk:
+                  opened.trade.entryMexcAsk,
+
+                entryMexcBookSpreadPct:
+                  opened.trade.entryMexcBookSpreadPct,
 
                 qtyUsd:
                   opened.trade.qtyUsd,
@@ -793,8 +807,26 @@ async function bootstrap(): Promise<void> {
           entryRef:
             closed.trade.entryRef,
 
+          entryMexcBid:
+            closed.trade.entryMexcBid,
+
+          entryMexcAsk:
+            closed.trade.entryMexcAsk,
+
+          entryMexcBookSpreadPct:
+            closed.trade.entryMexcBookSpreadPct,
+
           exitRef:
             closed.trade.exitRef,
+
+          exitMexcBid:
+            closed.trade.exitMexcBid,
+
+          exitMexcAsk:
+            closed.trade.exitMexcAsk,
+
+          exitMexcBookSpreadPct:
+            closed.trade.exitMexcBookSpreadPct,
 
           qtyUsd:
             closed.trade.qtyUsd,
@@ -869,8 +901,26 @@ async function bootstrap(): Promise<void> {
             entryPrice:
               closed.trade.entryPrice,
 
+            entryMexcBid:
+              closed.trade.entryMexcBid,
+
+            entryMexcAsk:
+              closed.trade.entryMexcAsk,
+
+            entryMexcBookSpreadPct:
+              closed.trade.entryMexcBookSpreadPct,
+
             exitPrice:
               closed.trade.exitPrice,
+
+            exitMexcBid:
+              closed.trade.exitMexcBid,
+
+            exitMexcAsk:
+              closed.trade.exitMexcAsk,
+
+            exitMexcBookSpreadPct:
+              closed.trade.exitMexcBookSpreadPct,
 
             grossPnlPct:
               closed.trade.grossPnlPct,
