@@ -1,10 +1,12 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+
 import type {
   FlipSignal,
   MexcTicker
 } from "../types.js";
+
 import type { DexPair } from "../mexc/dexscreener.js";
 import type { DexMapper } from "./dex-mapper.js";
 
@@ -55,7 +57,6 @@ interface SymbolState {
   cooldownUntil: number;
   lastSignalAt: number;
 
-  // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
   lastLongSignalAt: number;
   lastShortSignalAt: number;
 
@@ -64,7 +65,6 @@ interface SymbolState {
 
 const DEX_HISTORY_WINDOW_MS = 120_000;
 const DEX_DRIFT_POINTS = 5;
-const SIGNAL_CONFIRM_WINDOW_MS = 5_000;
 const MIN_DEX_HISTORY_POINTS = 2;
 
 function normalizeSymbol(
@@ -152,26 +152,60 @@ export class SpreadEngine {
 
   private readonly dexMapper: DexMapper;
 
-  constructor(dexMapper: DexMapper) {
+  constructor(
+    dexMapper: DexMapper
+  ) {
     this.dexMapper = dexMapper;
   }
 
+  /**
+   * Состояние стратегии хранится по MEXC-инструменту.
+   *
+   * Нельзя использовать normalizedDexKey:
+   *
+   * ETH_USDT -> ETHWBNB
+   * ETH_USDC -> ETHWBNB
+   *
+   * Иначе разные MEXC-контракты будут
+   * делить history, drift и confirmation.
+   */
   private getSnapshotKey(
     symbol: string
   ): string {
-    const normalized =
-      normalizeSymbol(symbol);
+    return normalizeSymbol(symbol);
+  }
 
+  private getContractMultiplier(
+    symbol: string
+  ): number {
     const mapping =
       this.dexMapper.get(symbol);
 
-    return (
-      mapping?.normalizedDexKey ??
-      normalized
-    );
+    const multiplier =
+      Number(
+        mapping?.contractMultiplier ?? 1
+      );
+
+    if (
+      !Number.isFinite(multiplier) ||
+      multiplier <= 0
+    ) {
+      return 1;
+    }
+
+    return multiplier;
   }
 
-  // ✅ FIX #18: Возвращаем boolean
+  private normalizeDexPrice(
+    symbol: string,
+    rawDexPrice: number
+  ): number {
+    const multiplier =
+      this.getContractMultiplier(symbol);
+
+    return rawDexPrice * multiplier;
+  }
+
   updateDexPrice(
     symbol: string,
     pair: DexPair
@@ -187,8 +221,10 @@ export class SpreadEngine {
           symbol,
           snapshotKey,
           priceUsd: pair.priceUsd,
-          liquidityUsd: pair.liquidityUsd,
-          volumeM5: pair.volumeM5
+          liquidityUsd:
+            pair.liquidityUsd,
+          volumeM5:
+            pair.volumeM5
         },
         "Invalid DEX pair snapshot, skipping"
       );
@@ -196,10 +232,44 @@ export class SpreadEngine {
       return false;
     }
 
+    const contractMultiplier =
+      this.getContractMultiplier(symbol);
+
+    const normalizedDexPrice =
+      this.normalizeDexPrice(
+        symbol,
+        pair.priceUsd
+      );
+
+    if (
+      !isPositiveFinite(
+        normalizedDexPrice
+      )
+    ) {
+      logger.warn(
+        {
+          symbol,
+          snapshotKey,
+          rawDexPrice: pair.priceUsd,
+          contractMultiplier,
+          normalizedDexPrice
+        },
+        "Invalid normalized DEX price, skipping"
+      );
+
+      return false;
+    }
+
+    const normalizedPair: DexPair = {
+      ...pair,
+      priceUsd:
+        normalizedDexPrice
+    };
+
     this.dexSnapshots.set(
       snapshotKey,
       {
-        ...pair,
+        ...normalizedPair,
         updatedAt: now
       }
     );
@@ -208,7 +278,8 @@ export class SpreadEngine {
       this.getState(snapshotKey);
 
     state.dexHistory.push({
-      price: pair.priceUsd,
+      price:
+        normalizedDexPrice,
       ts: now
     });
 
@@ -217,20 +288,35 @@ export class SpreadEngine {
 
     state.dexHistory =
       state.dexHistory.filter(
-        (item) => item.ts >= cutoff
+        (item) =>
+          item.ts >= cutoff
       );
 
     logger.info(
       {
         symbol,
         snapshotKey,
-        price: pair.priceUsd.toFixed(6),
+
+        rawPrice:
+          pair.priceUsd,
+
+        normalizedPrice:
+          normalizedDexPrice,
+
+        contractMultiplier,
+
         liquidity:
           pair.liquidityUsd.toFixed(0),
+
         volumeM5:
           pair.volumeM5.toFixed(0),
-        buysM5: pair.buysM5,
-        sellsM5: pair.sellsM5,
+
+        buysM5:
+          pair.buysM5,
+
+        sellsM5:
+          pair.sellsM5,
+
         historySize:
           state.dexHistory.length
       },
@@ -247,10 +333,14 @@ export class SpreadEngine {
       String(ticker.symbol);
 
     const snapshotKey =
-      this.getSnapshotKey(tickerSymbol);
+      this.getSnapshotKey(
+        tickerSymbol
+      );
 
     const mapping =
-      this.dexMapper.get(tickerSymbol);
+      this.dexMapper.get(
+        tickerSymbol
+      );
 
     if (
       !mapping ||
@@ -259,7 +349,8 @@ export class SpreadEngine {
       logger.debug(
         {
           tickerSymbol,
-          mappingStatus: mapping?.status,
+          mappingStatus:
+            mapping?.status,
           snapshotKey
         },
         "No active DEX mapping"
@@ -269,21 +360,27 @@ export class SpreadEngine {
     }
 
     const anchor =
-      this.dexSnapshots.get(snapshotKey);
+      this.dexSnapshots.get(
+        snapshotKey
+      );
 
     if (!anchor) {
       return null;
     }
 
-    if (!this.isValidDexPair(anchor)) {
+    if (
+      !this.isValidDexPair(anchor)
+    ) {
       logger.warn(
         {
           tickerSymbol,
           snapshotKey,
-          priceUsd: anchor.priceUsd,
+          priceUsd:
+            anchor.priceUsd,
           liquidityUsd:
             anchor.liquidityUsd,
-          volumeM5: anchor.volumeM5
+          volumeM5:
+            anchor.volumeM5
         },
         "Invalid DEX snapshot"
       );
@@ -319,7 +416,9 @@ export class SpreadEngine {
       return null;
     }
 
-    if (mexcAsk < mexcBid) {
+    if (
+      mexcAsk < mexcBid
+    ) {
       logger.warn(
         {
           tickerSymbol,
@@ -335,7 +434,9 @@ export class SpreadEngine {
     const mexcMid =
       (mexcBid + mexcAsk) / 2;
 
-    if (!isPositiveFinite(mexcMid)) {
+    if (
+      !isPositiveFinite(mexcMid)
+    ) {
       return null;
     }
 
@@ -378,40 +479,55 @@ export class SpreadEngine {
     }
 
     const mexcBookSpreadPct =
-      ((mexcAsk - mexcBid) /
-        mexcMid) *
-      100;
+      (
+        (mexcAsk - mexcBid) /
+        mexcMid
+      ) * 100;
 
     const longSpreadPct =
-      ((dexPrice - mexcAsk) /
-        mexcAsk) *
-      100;
+      (
+        (dexPrice - mexcAsk) /
+        mexcAsk
+      ) * 100;
 
     const shortSpreadPct =
-      ((mexcBid - dexPrice) /
-        mexcBid) *
-      100;
+      (
+        (mexcBid - dexPrice) /
+        mexcBid
+      ) * 100;
 
     return {
-      symbol: tickerSymbol,
+      symbol:
+        tickerSymbol,
 
       dexPrice,
+
       dexLiquidityUsd:
         anchor.liquidityUsd,
+
       dexVolumeM5:
         anchor.volumeM5,
+
       dexBuysM5:
         anchor.buysM5,
+
       dexSellsM5:
         anchor.sellsM5,
 
-      dexId: anchor.dexId,
-      chainId: anchor.chainId,
-      quoteSymbol: anchor.quoteSymbol,
+      dexId:
+        anchor.dexId,
+
+      chainId:
+        anchor.chainId,
+
+      quoteSymbol:
+        anchor.quoteSymbol,
+
       dexPairAddress:
         anchor.pairAddress,
 
       anchorAgeMs,
+
       dexUpdatedAt:
         anchor.updatedAt,
 
@@ -442,14 +558,18 @@ export class SpreadEngine {
     ticker: MexcTicker
   ): FlipSignal | null {
     const status =
-      this.getAnchorStatus(ticker);
+      this.getAnchorStatus(
+        ticker
+      );
 
     if (!status) {
       return null;
     }
 
     const snapshotKey =
-      this.getSnapshotKey(ticker.symbol);
+      this.getSnapshotKey(
+        ticker.symbol
+      );
 
     const state =
       this.getState(snapshotKey);
@@ -467,9 +587,12 @@ export class SpreadEngine {
     ) {
       logger.debug(
         {
-          symbol: ticker.symbol,
+          symbol:
+            ticker.symbol,
+
           anchorAgeMs:
             status.anchorAgeMs,
+
           maxAge:
             config.maxDexAnchorAgeMs
         },
@@ -501,9 +624,15 @@ export class SpreadEngine {
     ) {
       logger.debug(
         {
-          symbol: ticker.symbol,
-          buysM5: status.dexBuysM5,
-          sellsM5: status.dexSellsM5,
+          symbol:
+            ticker.symbol,
+
+          buysM5:
+            status.dexBuysM5,
+
+          sellsM5:
+            status.dexSellsM5,
+
           minimum:
             config.minDexBuysSellsM5
         },
@@ -536,19 +665,6 @@ export class SpreadEngine {
 
     const now = Date.now();
 
-    // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
-    const lastSignalAt =
-      status.longSpreadPct >= status.shortSpreadPct
-        ? state.lastLongSignalAt
-        : state.lastShortSignalAt;
-
-    if (
-      now - lastSignalAt <
-      config.signalCooldownMs
-    ) {
-      return null;
-    }
-
     const longValid =
       Number.isFinite(
         status.longSpreadPct
@@ -563,7 +679,10 @@ export class SpreadEngine {
       status.shortSpreadPct >=
         config.minSpreadPct;
 
-    if (!longValid && !shortValid) {
+    if (
+      !longValid &&
+      !shortValid
+    ) {
       state.lastDirection =
         undefined;
 
@@ -575,7 +694,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ FIX #13: Сначала проверяем тренд, потом выбираем направление
     const longBlocked =
       status.dexDirectionalDriftPct <
       -config.maxDexDriftPct;
@@ -584,13 +702,22 @@ export class SpreadEngine {
       status.dexDirectionalDriftPct >
       config.maxDexDriftPct;
 
-    if (longBlocked && shortBlocked) {
+    if (
+      longBlocked &&
+      shortBlocked
+    ) {
       return null;
     }
 
-    let direction: "LONG" | "SHORT";
+    let direction:
+      | "LONG"
+      | "SHORT";
+
     let spreadPct: number;
-    let entryRef: "ASK" | "BID";
+    let entryRef:
+      | "ASK"
+      | "BID";
+
     let reason: string;
 
     if (
@@ -623,6 +750,18 @@ export class SpreadEngine {
       return null;
     }
 
+    const directionLastSignalAt =
+      direction === "LONG"
+        ? state.lastLongSignalAt
+        : state.lastShortSignalAt;
+
+    if (
+      now - directionLastSignalAt <
+      config.signalCooldownMs
+    ) {
+      return null;
+    }
+
     if (
       direction === "LONG" &&
       status.dexDirectionalDriftPct <
@@ -630,7 +769,9 @@ export class SpreadEngine {
     ) {
       logger.debug(
         {
-          symbol: ticker.symbol,
+          symbol:
+            ticker.symbol,
+
           directionalDriftPct:
             status.dexDirectionalDriftPct
         },
@@ -647,7 +788,9 @@ export class SpreadEngine {
     ) {
       logger.debug(
         {
-          symbol: ticker.symbol,
+          symbol:
+            ticker.symbol,
+
           directionalDriftPct:
             status.dexDirectionalDriftPct
         },
@@ -663,7 +806,9 @@ export class SpreadEngine {
     ) {
       logger.debug(
         {
-          symbol: ticker.symbol,
+          symbol:
+            ticker.symbol,
+
           dexUpdatedAt:
             status.dexUpdatedAt
         },
@@ -675,6 +820,12 @@ export class SpreadEngine {
 
     state.lastConfirmedDexUpdatedAt =
       status.dexUpdatedAt;
+
+    const signalWindowMs =
+      Number(
+        config.signalWindowMs ??
+        5_000
+      );
 
     if (
       state.lastDirection !==
@@ -691,7 +842,7 @@ export class SpreadEngine {
 
       if (
         confirmationAge >
-        SIGNAL_CONFIRM_WINDOW_MS
+        signalWindowMs
       ) {
         state.confirmCount = 1;
         state.firstConfirmAt = now;
@@ -718,7 +869,8 @@ export class SpreadEngine {
       config.roundTripCostPct;
 
     const netEdgePct =
-      spreadPct - totalCostsPct;
+      spreadPct -
+      totalCostsPct;
 
     if (
       !Number.isFinite(netEdgePct) ||
@@ -727,11 +879,17 @@ export class SpreadEngine {
     ) {
       logger.debug(
         {
-          symbol: ticker.symbol,
+          symbol:
+            ticker.symbol,
+
           direction,
+
           spreadPct,
+
           totalCostsPct,
+
           netEdgePct,
+
           minNetEdge:
             config.minNetEdgePct
         },
@@ -741,49 +899,59 @@ export class SpreadEngine {
       return null;
     }
 
+    state.lastSignalAt =
+      now;
+
     if (
-      now - state.lastSignalAt <
-      config.signalCooldownMs
+      direction === "LONG"
     ) {
-      return null;
-    }
-
-    state.lastSignalAt = now;
-
-    // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
-    if (direction === "LONG") {
-      state.lastLongSignalAt = now;
+      state.lastLongSignalAt =
+        now;
     } else {
-      state.lastShortSignalAt = now;
+      state.lastShortSignalAt =
+        now;
     }
 
     logger.warn(
       {
-        symbol: ticker.symbol,
+        symbol:
+          ticker.symbol,
+
         direction,
-        spreadPct: spreadPct.toFixed(4),
+
+        spreadPct:
+          spreadPct.toFixed(4),
+
         netEdgePct:
           netEdgePct.toFixed(4),
+
         dexPrice:
           status.dexPrice.toFixed(6),
+
         mexcBid:
           status.mexcBid.toFixed(6),
+
         mexcAsk:
           status.mexcAsk.toFixed(6),
+
         confirmCount:
           state.confirmCount,
+
         reason
       },
       "SIGNAL GENERATED"
     );
 
     return {
-      id: crypto.randomUUID(),
+      id:
+        crypto.randomUUID(),
 
       detectedAt:
         new Date(now).toISOString(),
 
-      symbol: ticker.symbol,
+      symbol:
+        ticker.symbol,
+
       direction,
 
       spreadPct:
@@ -796,25 +964,43 @@ export class SpreadEngine {
         round(spreadPct),
 
       currentPrice:
-        round(status.mexcLast, 6),
+        round(
+          status.mexcLast,
+          6
+        ),
 
       referencePrice:
-        round(status.dexPrice, 6),
+        round(
+          status.dexPrice,
+          6
+        ),
 
       movePct:
         round(spreadPct),
 
       dexPrice:
-        round(status.dexPrice, 6),
+        round(
+          status.dexPrice,
+          6
+        ),
 
       mexcPrice:
-        round(status.mexcLast, 6),
+        round(
+          status.mexcLast,
+          6
+        ),
 
       mexcBid:
-        round(status.mexcBid, 6),
+        round(
+          status.mexcBid,
+          6
+        ),
 
       mexcAsk:
-        round(status.mexcAsk, 6),
+        round(
+          status.mexcAsk,
+          6
+        ),
 
       mexcTurnover24h:
         round(
@@ -840,9 +1026,15 @@ export class SpreadEngine {
       dexSellsM5:
         status.dexSellsM5,
 
-      dexId: status.dexId,
-      chainId: status.chainId,
-      quoteSymbol: status.quoteSymbol,
+      dexId:
+        status.dexId,
+
+      chainId:
+        status.chainId,
+
+      quoteSymbol:
+        status.quoteSymbol,
+
       dexPairAddress:
         status.dexPairAddress,
 
@@ -860,7 +1052,9 @@ export class SpreadEngine {
         status.dexUpdatedAt,
 
       dexDriftPct:
-        round(status.dexDriftPct),
+        round(
+          status.dexDriftPct
+        ),
 
       dexDirectionalDriftPct:
         round(
@@ -923,13 +1117,16 @@ export class SpreadEngine {
         firstConfirmAt: 0,
         cooldownUntil: 0,
         lastSignalAt: 0,
-        lastLongSignalAt: 0,  // ✅
-        lastShortSignalAt: 0,  // ✅
+        lastLongSignalAt: 0,
+        lastShortSignalAt: 0,
         lastConfirmedDexUpdatedAt:
           undefined
       };
 
-      this.states.set(symbol, state);
+      this.states.set(
+        symbol,
+        state
+      );
     }
 
     return state;
@@ -948,13 +1145,16 @@ export class SpreadEngine {
       Date.now() -
       DEX_HISTORY_WINDOW_MS;
 
-    const recent = history
-      .filter(
-        (item) =>
-          item.ts >= cutoff &&
-          isPositiveFinite(item.price)
-      )
-      .slice(-DEX_DRIFT_POINTS);
+    const recent =
+      history
+        .filter(
+          (item) =>
+            item.ts >= cutoff &&
+            isPositiveFinite(item.price)
+        )
+        .slice(
+          -DEX_DRIFT_POINTS
+        );
 
     if (
       recent.length <
@@ -971,9 +1171,15 @@ export class SpreadEngine {
         (item) => item.price
       );
 
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    const first = prices[0];
+    const min =
+      Math.min(...prices);
+
+    const max =
+      Math.max(...prices);
+
+    const first =
+      prices[0];
+
     const last =
       prices[prices.length - 1];
 
@@ -993,10 +1199,12 @@ export class SpreadEngine {
 
     return {
       rangePct:
-        ((max - min) / mid) * 100,
+        ((max - min) / mid) *
+        100,
 
       directionalPct:
-        ((last - first) / first) * 100
+        ((last - first) / first) *
+        100
     };
   }
 }
