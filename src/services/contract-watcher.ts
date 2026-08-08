@@ -3,6 +3,12 @@ import { logger } from "../logger.js";
 import type { ContractWatchState, MexcContract } from "../types.js";
 import { MexcFuturesRestClient } from "../mexc/futures-rest.js";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 export class ContractWatcher {
   private readonly knownSymbols = new Set<string>();
   private readonly states = new Map<string, ContractWatchState>();
@@ -22,6 +28,7 @@ export class ContractWatcher {
     }, config.contractRefreshMs);
   }
 
+  // ✅ FIX #8: Добавлен retry с backoff
   private async refresh(): Promise<void> {
     if (this.refreshInProgress) {
       return;
@@ -29,78 +36,94 @@ export class ContractWatcher {
 
     this.refreshInProgress = true;
 
-    try {
-      const contracts = await this.client.getContracts();
-      const now = Date.now();
+    const maxRetries = 3;
 
-      for (const contract of contracts) {
-        this.knownSymbols.add(contract.symbol);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const contracts = await this.client.getContracts();
+        const now = Date.now();
 
-        if (!this.states.has(contract.symbol)) {
-          this.states.set(contract.symbol, {
-            symbol: contract.symbol,
-            firstSeenAt: now,
-            lastCheckedAt: null,
-            lastMappedAt: null,
-            checksCount: 0
-          });
+        for (const contract of contracts) {
+          this.knownSymbols.add(contract.symbol);
+
+          if (!this.states.has(contract.symbol)) {
+            this.states.set(contract.symbol, {
+              symbol: contract.symbol,
+              firstSeenAt: now,
+              lastCheckedAt: null,
+              lastMappedAt: null,
+              checksCount: 0
+            });
+          }
+        }
+
+        if (!this.initialized) {
+          this.initialized = true;
+
+          logger.info(
+            { contracts: this.knownSymbols.size },
+            "Initial MEXC contracts snapshot loaded"
+          );
+
+          const startupCandidates = contracts
+            .slice(-config.startupBackfillLimit)
+            .reverse();
+
+          logger.info(
+            {
+              count: startupCandidates.length,
+              lookbackHours: config.contractLookbackHours
+            },
+            "Running startup rolling-window backfill"
+          );
+
+          for (const contract of startupCandidates) {
+            await this.processContractIfDue(contract, true);
+          }
+
+          logger.info(
+            { processed: startupCandidates.length },
+            "Startup rolling-window backfill completed"
+          );
+
+          break;
+        }
+
+        for (const contract of contracts) {
+          const state = this.states.get(contract.symbol);
+
+          if (!state) {
+            continue;
+          }
+
+          const ageHours = (now - state.firstSeenAt) / 3_600_000;
+
+          if (ageHours > config.contractLookbackHours) {
+            continue;
+          }
+
+          await this.processContractIfDue(contract, false);
+        }
+
+        this.pruneOldStates(now);
+        break;
+      } catch (error) {
+        if (attempt === maxRetries) {
+          logger.error(
+            { err: error, attempt },
+            "Could not refresh MEXC contracts after retries"
+          );
+        } else {
+          logger.warn(
+            { err: error, attempt },
+            "Refresh failed, retrying"
+          );
+          await sleep(attempt * 2000);
         }
       }
-
-      if (!this.initialized) {
-        this.initialized = true;
-
-        logger.info(
-          { contracts: this.knownSymbols.size },
-          "Initial MEXC contracts snapshot loaded"
-        );
-
-        const startupCandidates = contracts
-          .slice(-config.startupBackfillLimit)
-          .reverse();
-
-        logger.info(
-          {
-            count: startupCandidates.length,
-            lookbackHours: config.contractLookbackHours
-          },
-          "Running startup rolling-window backfill"
-        );
-
-        for (const contract of startupCandidates) {
-          await this.processContractIfDue(contract, true);
-        }
-
-        logger.info(
-          { processed: startupCandidates.length },
-          "Startup rolling-window backfill completed"
-        );
-
-        return;
-      }
-
-      for (const contract of contracts) {
-        const state = this.states.get(contract.symbol);
-
-        if (!state) {
-          continue;
-        }
-
-        const ageHours = (now - state.firstSeenAt) / 3_600_000;
-
-        if (ageHours > config.contractLookbackHours) {
-          continue;
-        }
-
-        await this.processContractIfDue(contract, false);
-      }
-
-      this.pruneOldStates(now);
-    } catch (error) {
-      logger.error({ err: error }, "Could not refresh MEXC contracts");
-    } finally {
-      this.refreshInProgress = false;
     }
+
+    this.refreshInProgress = false;
   }
 
   private async processContractIfDue(
