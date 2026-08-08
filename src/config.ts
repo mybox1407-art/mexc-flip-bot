@@ -80,7 +80,7 @@ export const config = {
   // ✅ FIX #3: Новый MEXC WebSocket endpoint
   mexcWsUrl: requireEnv(
     "MEXC_WS_URL",
-    "wss://wbs-api.mexc.com/ws"
+    "wss://contract.mexc.com/edge"
   ),
 
   telegramBotToken:
