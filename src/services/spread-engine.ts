@@ -774,97 +774,35 @@ export class SpreadEngine {
 
     return {
       id: crypto.randomUUID(),
-
-      detectedAt:
-        new Date(now).toISOString(),
-
+      detectedAt: new Date(now).toISOString(),
       symbol: ticker.symbol,
       direction,
-
-      spreadPct:
-        round(spreadPct),
-
-      netEdgePct:
-        round(netEdgePct),
-
-      priceDeviationPct:
-        round(spreadPct),
-
-      currentPrice:
-        round(status.mexcLast, 6),
-
-      referencePrice:
-        round(status.dexPrice, 6),
-
-      movePct:
-        round(spreadPct),
-
-      dexPrice:
-        round(status.dexPrice, 6),
-
-      mexcPrice:
-        round(status.mexcLast, 6),
-
-      mexcBid:
-        round(status.mexcBid, 6),
-
-      mexcAsk:
-        round(status.mexcAsk, 6),
-
-      mexcTurnover24h:
-        round(
-          status.mexcTurnover24h,
-          4
-        ),
-
-      dexLiquidityUsd:
-        round(
-          status.dexLiquidityUsd,
-          2
-        ),
-
-      dexVolumeM5:
-        round(
-          status.dexVolumeM5,
-          2
-        ),
-
-      dexBuysM5:
-        status.dexBuysM5,
-
-      dexSellsM5:
-        status.dexSellsM5,
-
+      spreadPct: round(spreadPct),
+      netEdgePct: round(netEdgePct),
+      priceDeviationPct: round(spreadPct),
+      currentPrice: round(status.mexcLast, 6),
+      referencePrice: round(status.dexPrice, 6),
+      movePct: round(spreadPct),
+      dexPrice: round(status.dexPrice, 6),
+      mexcPrice: round(status.mexcLast, 6),
+      mexcBid: round(status.mexcBid, 6),
+      mexcAsk: round(status.mexcAsk, 6),
+      mexcTurnover24h: round(status.mexcTurnover24h, 4),
+      dexLiquidityUsd: round(status.dexLiquidityUsd, 2),
+      dexVolumeM5: round(status.dexVolumeM5, 2),
+      dexBuysM5: status.dexBuysM5,
+      dexSellsM5: status.dexSellsM5,
       dexId: status.dexId,
       chainId: status.chainId,
       quoteSymbol: status.quoteSymbol,
-      dexPairAddress:
-        status.dexPairAddress,
-
+      dexPairAddress: status.dexPairAddress,
       entryRef,
-
-      mexcBookSpreadPct:
-        round(
-          status.mexcBookSpreadPct
-        ),
-
-      anchorAgeMs:
-        status.anchorAgeMs,
-
-      dexUpdatedAt:
-        status.dexUpdatedAt,  // ✅
-
-      dexDriftPct:
-        round(status.dexDriftPct),
-
-      dexDirectionalDriftPct:  // ✅
-        round(
-          status.dexDirectionalDriftPct
-        ),
-
-      confirmCount:
-        state.confirmCount,
-
+      mexcBookSpreadPct: round(status.mexcBookSpreadPct),
+      anchorAgeMs: status.anchorAgeMs,
+      dexUpdatedAt: status.dexUpdatedAt,
+      dexDriftPct: round(status.dexDriftPct),
+      dexDirectionalDriftPct: round(status.dexDirectionalDriftPct),
+      confirmCount: state.confirmCount,
       reason
     };
   }
