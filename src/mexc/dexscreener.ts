@@ -104,6 +104,10 @@ export class DexScreenerClient {
   private requestQueue: Promise<void> =
     Promise.resolve();
 
+  // ✅ FIX #6: Глобальный лимит запросов в минуту
+  private readonly maxRequestsPerMinute = 60;
+  private readonly requestTimestamps: number[] = [];
+
   private async throttle(): Promise<void> {
     let release!: () => void;
 
@@ -120,6 +124,34 @@ export class DexScreenerClient {
     try {
       const now = Date.now();
 
+      // ✅ Удаляем старые timestamp (>1 мин назад)
+      while (
+        this.requestTimestamps.length > 0 &&
+        now - this.requestTimestamps[0] > 60_000
+      ) {
+        this.requestTimestamps.shift();
+      }
+
+      // ✅ Если достигли лимита — ждём
+      if (
+        this.requestTimestamps.length >=
+        this.maxRequestsPerMinute
+      ) {
+        const waitMs =
+          60_000 - (now - this.requestTimestamps[0]);
+
+        if (waitMs > 0) {
+          logger.warn(
+            { waitMs },
+            "DexScreener rate limit approaching, waiting"
+          );
+          await sleep(waitMs);
+        }
+      }
+
+      this.requestTimestamps.push(Date.now());
+
+      // Старый throttle
       const waitMs =
         this.lastRequestAt +
         this.minRequestGapMs -
@@ -479,9 +511,6 @@ export class DexScreenerClient {
             return false;
           }
 
-          // Исправленный фильтр:
-          // требуется минимум заданное количество
-          // и buys, и sells отдельно.
           if (
             buysM5 <
               config.minDexBuysSellsM5 ||
