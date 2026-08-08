@@ -72,7 +72,7 @@ function formatHoldMs(
 }
 
 function formatSamaraDateTime(
-  value?: string | number
+  value?: string | number | Date
 ): string {
   if (
     value === undefined ||
