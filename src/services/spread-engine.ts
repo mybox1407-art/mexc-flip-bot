@@ -44,11 +44,16 @@ interface DexSnapshot extends DexPair {
   updatedAt: number;
 }
 
+interface PriceHistoryPoint {
+  price: number;
+  ts: number;
+}
+
 interface SymbolState {
-  dexHistory: Array<{
-    price: number;
-    ts: number;
-  }>;
+  dexHistory: PriceHistoryPoint[];
+  mexcHistory: PriceHistoryPoint[];
+
+  lastMexcHistoryTs?: number;
 
   lastDirection?: "LONG" | "SHORT";
   confirmCount: number;
@@ -65,7 +70,11 @@ interface SymbolState {
 
 const DEX_HISTORY_WINDOW_MS = 120_000;
 const DEX_DRIFT_POINTS = 5;
-const MIN_DEX_HISTORY_POINTS = 2;
+
+const MEXC_HISTORY_WINDOW_MS = 30_000;
+const MEXC_TREND_BLOCK_PCT = 0.3;
+
+const MIN_HISTORY_POINTS = 2;
 
 function normalizeSymbol(
   value: string
@@ -158,17 +167,6 @@ export class SpreadEngine {
     this.dexMapper = dexMapper;
   }
 
-  /**
-   * Состояние стратегии хранится по MEXC-инструменту.
-   *
-   * Нельзя использовать normalizedDexKey:
-   *
-   * ETH_USDT -> ETHWBNB
-   * ETH_USDC -> ETHWBNB
-   *
-   * Иначе разные MEXC-контракты будут
-   * делить history, drift и confirmation.
-   */
   private getSnapshotKey(
     symbol: string
   ): string {
@@ -215,12 +213,15 @@ export class SpreadEngine {
     const snapshotKey =
       this.getSnapshotKey(symbol);
 
-    if (!this.isValidDexPair(pair)) {
+    if (
+      !this.isValidDexPair(pair)
+    ) {
       logger.warn(
         {
           symbol,
           snapshotKey,
-          priceUsd: pair.priceUsd,
+          priceUsd:
+            pair.priceUsd,
           liquidityUsd:
             pair.liquidityUsd,
           volumeM5:
@@ -250,7 +251,8 @@ export class SpreadEngine {
         {
           symbol,
           snapshotKey,
-          rawDexPrice: pair.priceUsd,
+          rawDexPrice:
+            pair.priceUsd,
           contractMultiplier,
           normalizedDexPrice
         },
@@ -443,9 +445,21 @@ export class SpreadEngine {
     const state =
       this.getState(snapshotKey);
 
-    const drift =
+    this.recordMexcPrice(
+      state,
+      mexcMid,
+      ticker.timestamp,
+      now
+    );
+
+    const dexDrift =
       this.calculateDexDrift(
         state.dexHistory
+      );
+
+    const mexcDirectionalDriftPct =
+      this.calculateMexcTrend(
+        state.mexcHistory
       );
 
     const dexPrice =
@@ -532,10 +546,10 @@ export class SpreadEngine {
         anchor.updatedAt,
 
       dexDriftPct:
-        drift.rangePct,
+        dexDrift.rangePct,
 
       dexDirectionalDriftPct:
-        drift.directionalPct,
+        dexDrift.directionalPct,
 
       mexcBid,
       mexcAsk,
@@ -576,8 +590,29 @@ export class SpreadEngine {
 
     if (
       state.dexHistory.length <
-      MIN_DEX_HISTORY_POINTS
+      MIN_HISTORY_POINTS
     ) {
+      return null;
+    }
+
+    if (
+      state.mexcHistory.length <
+      MIN_HISTORY_POINTS
+    ) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          mexcHistorySize:
+            state.mexcHistory.length,
+
+          minimum:
+            MIN_HISTORY_POINTS
+        },
+        "MEXC history is not ready"
+      );
+
       return null;
     }
 
@@ -663,7 +698,10 @@ export class SpreadEngine {
       return null;
     }
 
-    const now = Date.now();
+    const mexcDirectionalDriftPct =
+      this.calculateMexcTrend(
+        state.mexcHistory
+      );
 
     const longValid =
       Number.isFinite(
@@ -694,18 +732,45 @@ export class SpreadEngine {
       return null;
     }
 
+    /**
+     * LONG запрещён, если MEXC
+     * падает быстрее порога.
+     *
+     * SHORT запрещён, если MEXC
+     * растёт быстрее порога.
+     */
     const longBlocked =
       status.dexDirectionalDriftPct <
-      -config.maxDexDriftPct;
+        -config.maxDexDriftPct ||
+      mexcDirectionalDriftPct <
+        -MEXC_TREND_BLOCK_PCT;
 
     const shortBlocked =
       status.dexDirectionalDriftPct >
-      config.maxDexDriftPct;
+        config.maxDexDriftPct ||
+      mexcDirectionalDriftPct >
+        MEXC_TREND_BLOCK_PCT;
 
     if (
       longBlocked &&
       shortBlocked
     ) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          mexcDirectionalDriftPct,
+
+          dexDirectionalDriftPct:
+            status.dexDirectionalDriftPct,
+
+          longBlocked,
+          shortBlocked
+        },
+        "Both directions blocked by trend filters"
+      );
+
       return null;
     }
 
@@ -714,6 +779,7 @@ export class SpreadEngine {
       | "SHORT";
 
     let spreadPct: number;
+
     let entryRef:
       | "ASK"
       | "BID";
@@ -731,9 +797,12 @@ export class SpreadEngine {
       )
     ) {
       direction = "LONG";
+
       spreadPct =
         status.longSpreadPct;
+
       entryRef = "ASK";
+
       reason =
         "MEXC below DEX anchor";
     } else if (
@@ -741,14 +810,37 @@ export class SpreadEngine {
       !shortBlocked
     ) {
       direction = "SHORT";
+
       spreadPct =
         status.shortSpreadPct;
+
       entryRef = "BID";
+
       reason =
         "MEXC above DEX anchor";
     } else {
       return null;
     }
+
+    logger.debug(
+      {
+        symbol:
+          ticker.symbol,
+
+        direction,
+
+        mexcDirectionalDriftPct,
+
+        dexDirectionalDriftPct:
+          status.dexDirectionalDriftPct,
+
+        longBlocked,
+        shortBlocked,
+
+        spreadPct
+      },
+      "MEXC trend filter"
+    );
 
     const directionLastSignalAt =
       direction === "LONG"
@@ -756,7 +848,9 @@ export class SpreadEngine {
         : state.lastShortSignalAt;
 
     if (
-      now - directionLastSignalAt <
+      nowMinus(
+        directionLastSignalAt
+      ) <
       config.signalCooldownMs
     ) {
       return null;
@@ -826,6 +920,8 @@ export class SpreadEngine {
         config.signalWindowMs ??
         5_000
       );
+
+    const now = Date.now();
 
     if (
       state.lastDirection !==
@@ -933,6 +1029,12 @@ export class SpreadEngine {
 
         mexcAsk:
           status.mexcAsk.toFixed(6),
+
+        mexcDirectionalDriftPct:
+          mexcDirectionalDriftPct.toFixed(4),
+
+        dexDirectionalDriftPct:
+          status.dexDirectionalDriftPct.toFixed(4),
 
         confirmCount:
           state.confirmCount,
@@ -1068,6 +1170,73 @@ export class SpreadEngine {
     };
   }
 
+  private recordMexcPrice(
+    state: SymbolState,
+    mexcMid: number,
+    tickerTimestamp: number,
+    fallbackNow: number
+  ): void {
+    const timestamp =
+      Number.isFinite(tickerTimestamp) &&
+      tickerTimestamp > 0
+        ? tickerTimestamp
+        : fallbackNow;
+
+    if (
+      state.lastMexcHistoryTs ===
+      timestamp
+    ) {
+      return;
+    }
+
+    state.lastMexcHistoryTs =
+      timestamp;
+
+    state.mexcHistory.push({
+      price: mexcMid,
+      ts: timestamp
+    });
+
+    const cutoff =
+      fallbackNow -
+      MEXC_HISTORY_WINDOW_MS;
+
+    state.mexcHistory =
+      state.mexcHistory.filter(
+        (item) =>
+          item.ts >= cutoff
+      );
+  }
+
+  private calculateMexcTrend(
+    history: PriceHistoryPoint[]
+  ): number {
+    if (
+      history.length <
+      MIN_HISTORY_POINTS
+    ) {
+      return 0;
+    }
+
+    const first =
+      history[0]?.price;
+
+    const last =
+      history[history.length - 1]?.price;
+
+    if (
+      !isPositiveFinite(first) ||
+      !isPositiveFinite(last)
+    ) {
+      return 0;
+    }
+
+    return (
+      (last - first) /
+      first
+    ) * 100;
+  }
+
   private isValidDexPair(
     pair: DexPair
   ): boolean {
@@ -1113,6 +1282,11 @@ export class SpreadEngine {
     if (!state) {
       state = {
         dexHistory: [],
+        mexcHistory: [],
+
+        lastMexcHistoryTs:
+          undefined,
+
         confirmCount: 0,
         firstConfirmAt: 0,
         cooldownUntil: 0,
@@ -1133,10 +1307,7 @@ export class SpreadEngine {
   }
 
   private calculateDexDrift(
-    history: Array<{
-      price: number;
-      ts: number;
-    }>
+    history: PriceHistoryPoint[]
   ): {
     rangePct: number;
     directionalPct: number;
@@ -1158,7 +1329,7 @@ export class SpreadEngine {
 
     if (
       recent.length <
-      MIN_DEX_HISTORY_POINTS
+      MIN_HISTORY_POINTS
     ) {
       return {
         rangePct: 0,
@@ -1207,4 +1378,10 @@ export class SpreadEngine {
         100
     };
   }
+}
+
+function nowMinus(
+  timestamp: number
+): number {
+  return Date.now() - timestamp;
 }
