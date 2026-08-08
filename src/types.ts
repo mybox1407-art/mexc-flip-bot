@@ -97,7 +97,16 @@ export interface PaperTrade {
   exitPrice?: number;
 
   entryRef: "ASK" | "BID";
+
+  entryMexcBid?: number;
+  entryMexcAsk?: number;
+  entryMexcBookSpreadPct?: number;
+
   exitRef?: "ASK" | "BID";
+
+  exitMexcBid?: number;
+  exitMexcAsk?: number;
+  exitMexcBookSpreadPct?: number;
 
   qtyUsd: number;
   qtyToken: number;
