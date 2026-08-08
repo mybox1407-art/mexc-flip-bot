@@ -152,10 +152,38 @@ export class PaperExecutionService {
       return null;
     }
 
+    const mexcBid =
+      Number(signal.mexcBid);
+
+    const mexcAsk =
+      Number(signal.mexcAsk);
+
+    if (
+      !Number.isFinite(mexcBid) ||
+      mexcBid <= 0 ||
+      !Number.isFinite(mexcAsk) ||
+      mexcAsk <= 0 ||
+      mexcAsk < mexcBid
+    ) {
+      logger.warn(
+        {
+          symbol: signal.symbol,
+          direction: signal.direction,
+          mexcBid,
+          mexcAsk,
+          mexcBookSpreadPct:
+            signal.mexcBookSpreadPct
+        },
+        "Signal skipped: invalid MEXC order book"
+      );
+
+      return null;
+    }
+
     const entryPrice =
       signal.direction === "LONG"
-        ? signal.mexcAsk
-        : signal.mexcBid;
+        ? mexcAsk
+        : mexcBid;
 
     if (
       !Number.isFinite(entryPrice) ||
@@ -246,11 +274,8 @@ export class PaperExecutionService {
       dexDirectionalDriftPct:
         signal.dexDirectionalDriftPct,
 
-      mexcBid:
-        signal.mexcBid,
-
-      mexcAsk:
-        signal.mexcAsk,
+      mexcBid,
+      mexcAsk,
 
       mexcLast:
         signal.mexcPrice,
@@ -316,10 +341,10 @@ export class PaperExecutionService {
           : "BID",
 
       entryMexcBid:
-        signal.mexcBid,
+        mexcBid,
 
       entryMexcAsk:
-        signal.mexcAsk,
+        mexcAsk,
 
       entryMexcBookSpreadPct:
         signal.mexcBookSpreadPct,
@@ -377,8 +402,11 @@ export class PaperExecutionService {
         entryMexcBookSpreadPct:
           trade.entryMexcBookSpreadPct,
 
-        qtyUsd: trade.qtyUsd,
-        qtyToken: trade.qtyToken,
+        qtyUsd:
+          trade.qtyUsd,
+
+        qtyToken:
+          trade.qtyToken,
 
         depositAtEntry:
           trade.depositAtEntry,
