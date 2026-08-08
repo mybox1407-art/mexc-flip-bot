@@ -56,8 +56,6 @@ export class PaperExecutionService {
 
   private readonly maxOpenTrades = 3;
 
-  // 0.3 = 30% депозита.
-  // Для 0.3% нужно использовать 0.003.
   private readonly tradeAllocationPct = 0.3;
 
   private depositUsd = 100;
@@ -80,57 +78,25 @@ export class PaperExecutionService {
   /**
    * Расчёт приблизительной исполняемой DEX-цены.
    *
-   * LONG:
-   * MEXC: покупка по ASK.
-   * DEX: предполагаемая продажа по BID,
-   * поэтому цена исполнения ниже anchor.
-   *
-   * SHORT:
-   * MEXC: продажа по BID.
-   * DEX: предполагаемая покупка по ASK,
-   * поэтому цена исполнения выше anchor.
-   *
-   * Это paper-модель. Для live нужен настоящий DEX quote.
+   * Для flip-стратегии DEX используется только как ценовой якорь.
+   * Никаких покупок/продаж на DEX не происходит.
    */
   private estimateExecutableDexPrice(
     anchor: AnchorStatus,
     qtyUsd: number,
     direction: "LONG" | "SHORT"
   ): number {
+    // ✅ FIX #2: Возвращаем DEX-цену напрямую без price impact
     if (
       !Number.isFinite(
         anchor.dexPrice
       ) ||
-      anchor.dexPrice <= 0 ||
-      !Number.isFinite(
-        anchor.dexLiquidityUsd
-      ) ||
-      anchor.dexLiquidityUsd <= 0 ||
-      !Number.isFinite(qtyUsd) ||
-      qtyUsd <= 0
+      anchor.dexPrice <= 0
     ) {
       return NaN;
     }
 
-    const estimatedImpactPct =
-      Math.min(
-        (qtyUsd /
-          anchor.dexLiquidityUsd) *
-          100,
-        config.paperMaxDexPriceImpactPct
-      );
-
-    if (direction === "LONG") {
-      return (
-        anchor.dexPrice *
-        (1 - estimatedImpactPct / 100)
-      );
-    }
-
-    return (
-      anchor.dexPrice *
-      (1 + estimatedImpactPct / 100)
-    );
+    return anchor.dexPrice;
   }
 
   onSignal(
@@ -555,17 +521,11 @@ export class PaperExecutionService {
             trade.dexAnchorAtEntry
           ) * 100;
 
-        const movedAgainst =
-          trade.direction === "LONG"
-            ? anchorMovePct <=
-              -config.paperMaxAnchorMoveAgainstPct
-            : anchorMovePct >=
-              config.paperMaxAnchorMoveAgainstPct;
-
-        if (movedAgainst) {
-          closeReason =
-            "anchor_moved_against_position";
-        }
+        // ✅ FIX #11: Удалена проверка anchor_moved_against_position
+        // const movedAgainst = ...
+        // if (movedAgainst) {
+        //   closeReason = "anchor_moved_against_position";
+        // }
 
         currentSpreadPct =
           trade.direction === "LONG"
