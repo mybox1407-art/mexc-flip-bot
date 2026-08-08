@@ -55,7 +55,6 @@ interface SymbolState {
   cooldownUntil: number;
   lastSignalAt: number;
 
-  // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
   lastLongSignalAt: number;
   lastShortSignalAt: number;
 
@@ -171,7 +170,6 @@ export class SpreadEngine {
     );
   }
 
-  // ✅ FIX #18: Возвращаем boolean
   updateDexPrice(
     symbol: string,
     pair: DexPair
@@ -536,7 +534,6 @@ export class SpreadEngine {
 
     const now = Date.now();
 
-    // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
     const lastSignalAt =
       status.longSpreadPct >= status.shortSpreadPct
         ? state.lastLongSignalAt
@@ -575,7 +572,6 @@ export class SpreadEngine {
       return null;
     }
 
-    // ✅ FIX #13: Сначала проверяем тренд, потом выбираем направление
     const longBlocked =
       status.dexDirectionalDriftPct <
       -config.maxDexDriftPct;
@@ -750,7 +746,6 @@ export class SpreadEngine {
 
     state.lastSignalAt = now;
 
-    // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
     if (direction === "LONG") {
       state.lastLongSignalAt = now;
     } else {
@@ -857,12 +852,12 @@ export class SpreadEngine {
         status.anchorAgeMs,
 
       dexUpdatedAt:
-        status.dexUpdatedAt,
+        status.dexUpdatedAt,  // ✅
 
       dexDriftPct:
         round(status.dexDriftPct),
 
-      dexDirectionalDriftPct:
+      dexDirectionalDriftPct:  // ✅
         round(
           status.dexDirectionalDriftPct
         ),
@@ -923,8 +918,8 @@ export class SpreadEngine {
         firstConfirmAt: 0,
         cooldownUntil: 0,
         lastSignalAt: 0,
-        lastLongSignalAt: 0,  // ✅
-        lastShortSignalAt: 0,  // ✅
+        lastLongSignalAt: 0,
+        lastShortSignalAt: 0,
         lastConfirmedDexUpdatedAt:
           undefined
       };
