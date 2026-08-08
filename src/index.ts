@@ -22,6 +22,13 @@ import type {
   MexcTicker
 } from "./types.js";
 
+// ✅ Добавить функцию sleep
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function normalizeSymbol(
   value: string
 ): string {
@@ -423,10 +430,18 @@ async function bootstrap(): Promise<void> {
         mexcSymbol,
         pair
       ) => {
-        spreadEngine.updateDexPrice(
+        const updated = spreadEngine.updateDexPrice(
           mexcSymbol,
           pair
         );
+
+        // ✅ Логирование, если updateDexPrice вернул false
+        if (!updated) {
+          logger.warn(
+            { mexcSymbol },
+            "DEX price update failed"
+          );
+        }
 
         await dexPricesWriter.appendRow({
           timestamp:
