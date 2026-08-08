@@ -211,6 +211,10 @@ async function bootstrap(): Promise<void> {
       config.telegramChatId
     );
 
+  let mexcWsClient:
+    MexcFuturesWsClient | null =
+    null;
+
   await dexMapper.load();
 
   await telegramNotifier.sendStartup();
@@ -452,6 +456,12 @@ async function bootstrap(): Promise<void> {
 
     await dexMapper.save();
 
+    if (mexcWsClient) {
+      mexcWsClient.subscribeTicker(
+        contract.symbol
+      );
+    }
+
     logger.info(
       {
         contractId:
@@ -495,7 +505,10 @@ async function bootstrap(): Promise<void> {
         priceUsd:
           pair.priceUsd,
 
-        normalizedDexKey
+        normalizedDexKey,
+
+        tickerSubscribed:
+          Boolean(mexcWsClient)
       },
       "New DEX mapping created"
     );
@@ -566,7 +579,7 @@ async function bootstrap(): Promise<void> {
       }
     );
 
-  const mexcWsClient =
+  mexcWsClient =
     new MexcFuturesWsClient({
       onTicker: async (
         ticker: MexcTicker
@@ -984,9 +997,38 @@ async function bootstrap(): Promise<void> {
       }
     });
 
+  if (!mexcWsClient) {
+    throw new Error(
+      "MEXC WebSocket client was not initialized"
+    );
+  }
+
   mexcWsClient.connect();
 
   await contractWatcher.start();
+
+  const activeMappings =
+    dexMapper.getActive();
+
+  for (
+    const mapping
+    of activeMappings
+  ) {
+    mexcWsClient.subscribeTicker(
+      mapping.mexcSymbol
+    );
+  }
+
+  logger.info(
+    {
+      activeMappings:
+        activeMappings.length,
+
+      subscribedTickers:
+        activeMappings.length
+    },
+    "Subscribed tickers for active DEX mappings"
+  );
 
   dexPricePoller.start();
 
@@ -1008,7 +1050,7 @@ async function bootstrap(): Promise<void> {
 
     dexPricePoller.stop();
 
-    mexcWsClient.stop();
+    mexcWsClient?.stop();
 
     await Promise.all([
       contractsWriter.close(),
