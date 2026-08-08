@@ -96,76 +96,7 @@ export class DexScreenerClient {
   private readonly baseUrl =
     "https://api.dexscreener.com/latest/dex";
 
-  private lastRequestAt = 0;
-  private readonly minRequestGapMs = 450;
-
   private requestCounter = 0;
-
-  private requestQueue: Promise<void> =
-    Promise.resolve();
-
-  // ✅ FIX #6: Глобальный лимит запросов в минуту
-  private readonly maxRequestsPerMinute = 60;
-  private readonly requestTimestamps: number[] = [];
-
-  private async throttle(): Promise<void> {
-    let release!: () => void;
-
-    const previous =
-      this.requestQueue;
-
-    this.requestQueue =
-      new Promise<void>((resolve) => {
-        release = resolve;
-      });
-
-    await previous;
-
-    try {
-      const now = Date.now();
-
-      // ✅ Удаляем старые timestamp (>1 мин назад)
-      while (
-        this.requestTimestamps.length > 0 &&
-        now - this.requestTimestamps[0] > 60_000
-      ) {
-        this.requestTimestamps.shift();
-      }
-
-      // ✅ Если достигли лимита — ждём
-      if (
-        this.requestTimestamps.length >=
-        this.maxRequestsPerMinute
-      ) {
-        const waitMs =
-          60_000 - (now - this.requestTimestamps[0]);
-
-        if (waitMs > 0) {
-          logger.warn(
-            { waitMs },
-            "DexScreener rate limit approaching, waiting"
-          );
-          await sleep(waitMs);
-        }
-      }
-
-      this.requestTimestamps.push(Date.now());
-
-      // Старый throttle
-      const waitMs =
-        this.lastRequestAt +
-        this.minRequestGapMs -
-        now;
-
-      if (waitMs > 0) {
-        await sleep(waitMs);
-      }
-
-      this.lastRequestAt = Date.now();
-    } finally {
-      release();
-    }
-  }
 
   private async fetchJsonWithRetry(
     url: string,
@@ -179,8 +110,6 @@ export class DexScreenerClient {
       attempt <= 4;
       attempt += 1
     ) {
-      await this.throttle();
-
       const startedAt = Date.now();
 
       try {
