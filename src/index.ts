@@ -22,13 +22,6 @@ import type {
   MexcTicker
 } from "./types.js";
 
-// ✅ Добавить функцию sleep
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 function normalizeSymbol(
   value: string
 ): string {
@@ -48,14 +41,15 @@ function shouldSkipDexLookup(
     upper.split("_")[0] ??
     upper;
 
-  const normalized =
-    normalizeSymbol(base);
-
-  if (upper.includes("_USD1")) {
+  if (
+    upper.includes("_USD1")
+  ) {
     return true;
   }
 
-  if (base.includes("STOCK")) {
+  if (
+    base.includes("STOCK")
+  ) {
     return true;
   }
 
@@ -67,17 +61,55 @@ function shouldSkipDexLookup(
     return true;
   }
 
-  if (/^\d{3,}/.test(normalized)) {
-    return true;
-  }
-
+  /**
+   * Не блокируем символы с числовым
+   * префиксом:
+   *
+   * 1000PEPE
+   * 1000SHIB
+   * 1000000BABYDOGE
+   *
+   * Для них отдельно нужен multiplier.
+   */
   return false;
 }
 
+function getContractMultiplier(
+  symbol: string
+): number {
+  const base =
+    String(symbol)
+      .toUpperCase()
+      .split("_")[0] ?? "";
+
+  if (
+    base.startsWith("1000000")
+  ) {
+    return 1_000_000;
+  }
+
+  if (
+    base.startsWith("10000")
+  ) {
+    return 10_000;
+  }
+
+  if (
+    base.startsWith("1000")
+  ) {
+    return 1_000;
+  }
+
+  return 1;
+}
+
 async function bootstrap(): Promise<void> {
-  await mkdir(config.dataDir, {
-    recursive: true
-  });
+  await mkdir(
+    config.dataDir,
+    {
+      recursive: true
+    }
+  );
 
   const contractsWriter =
     new CsvWriter(
@@ -170,7 +202,9 @@ async function bootstrap(): Promise<void> {
     new DexMapper();
 
   const spreadEngine =
-    new SpreadEngine(dexMapper);
+    new SpreadEngine(
+      dexMapper
+    );
 
   const paperExecution =
     new PaperExecutionService();
@@ -255,6 +289,9 @@ async function bootstrap(): Promise<void> {
       detectedAt:
         new Date().toISOString(),
 
+      contractId:
+        contract.contractId,
+
       symbol:
         contract.symbol,
 
@@ -296,6 +333,9 @@ async function bootstrap(): Promise<void> {
     ) {
       logger.info(
         {
+          contractId:
+            contract.contractId,
+
           symbol:
             contract.symbol,
 
@@ -319,20 +359,26 @@ async function bootstrap(): Promise<void> {
     }
 
     const searchQuery =
-      contract.baseCoin ??
-      contract.symbol.split("_")[0] ??
+      contract.baseCoin?.trim() ||
+      contract.symbol
+        .split("_")[0] ||
       contract.symbol;
 
     const pair =
-      await dexScreenerClient.findBestPairAcrossChains(
-        searchQuery
-      );
+      await dexScreenerClient
+        .findBestPairAcrossChains(
+          searchQuery
+        );
 
     if (!pair) {
       logger.debug(
         {
+          contractId:
+            contract.contractId,
+
           symbol:
             contract.symbol,
+
           searchQuery
         },
         "DEX pair not found"
@@ -341,14 +387,28 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
+    const contractMultiplier =
+      getContractMultiplier(
+        contract.symbol
+      );
+
     const normalizedDexKey =
       normalizeSymbol(
         `${pair.baseSymbol}_${pair.quoteSymbol}`
       );
 
     dexMapper.upsert({
+      mexcContractId:
+        contract.contractId,
+
       mexcSymbol:
         contract.symbol,
+
+      baseCoin:
+        contract.baseCoin ?? "",
+
+      mexcQuoteCoin:
+        contract.quoteCoin ?? "",
 
       chainId:
         pair.chainId,
@@ -368,6 +428,11 @@ async function bootstrap(): Promise<void> {
       quoteSymbol:
         pair.quoteSymbol,
 
+      contractSize:
+        contract.contractSize,
+
+      contractMultiplier,
+
       liquidityUsd:
         pair.liquidityUsd,
 
@@ -377,7 +442,11 @@ async function bootstrap(): Promise<void> {
       priceUsd:
         pair.priceUsd,
 
-      status: "active",
+      pairCreatedAt:
+        pair.pairCreatedAt,
+
+      status:
+        "active",
 
       updatedAt:
         new Date().toISOString(),
@@ -389,14 +458,34 @@ async function bootstrap(): Promise<void> {
 
     logger.info(
       {
+        contractId:
+          contract.contractId,
+
         symbol:
           contract.symbol,
+
+        baseCoin:
+          contract.baseCoin,
+
+        quoteCoin:
+          contract.quoteCoin,
+
+        contractSize:
+          contract.contractSize,
+
+        contractMultiplier,
 
         chainId:
           pair.chainId,
 
         dexId:
           pair.dexId,
+
+        baseTokenAddress:
+          pair.baseTokenAddress,
+
+        pairAddress:
+          pair.pairAddress,
 
         quoteSymbol:
           pair.quoteSymbol,
@@ -430,15 +519,17 @@ async function bootstrap(): Promise<void> {
         mexcSymbol,
         pair
       ) => {
-        const updated = spreadEngine.updateDexPrice(
-          mexcSymbol,
-          pair
-        );
+        const updated =
+          spreadEngine.updateDexPrice(
+            mexcSymbol,
+            pair
+          );
 
-        // ✅ Логирование, если updateDexPrice вернул false
         if (!updated) {
           logger.warn(
-            { mexcSymbol },
+            {
+              mexcSymbol
+            },
             "DEX price update failed"
           );
         }
@@ -650,8 +741,6 @@ async function bootstrap(): Promise<void> {
           }
         }
 
-        // Не проверяем закрытие в том же тике,
-        // в котором только что открыли позицию.
         if (openedNow) {
           return;
         }
