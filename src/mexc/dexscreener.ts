@@ -64,7 +64,7 @@ function normalizeSymbol(value: string): string {
   return String(value)
     .trim()
     .toUpperCase()
-    .replace(/[_\-\/\s]/g, "");
+    .replace(/[_\-/\s]/g, "");
 }
 
 function isBlockedBaseSymbol(
@@ -97,7 +97,6 @@ export class DexScreenerClient {
     "https://api.dexscreener.com/latest/dex";
 
   private lastRequestAt = 0;
-
   private readonly minRequestGapMs = 450;
 
   private requestCounter = 0;
@@ -111,11 +110,10 @@ export class DexScreenerClient {
     const previous =
       this.requestQueue;
 
-    this.requestQueue = new Promise<void>(
-      (resolve) => {
+    this.requestQueue =
+      new Promise<void>((resolve) => {
         release = resolve;
-      }
-    );
+      });
 
     await previous;
 
@@ -164,7 +162,8 @@ export class DexScreenerClient {
           "DexScreener request started"
         );
 
-        const response = await fetch(url);
+        const response =
+          await fetch(url);
 
         const durationMs =
           Date.now() - startedAt;
@@ -313,15 +312,6 @@ export class DexScreenerClient {
       }
     }
 
-    logger.error(
-      {
-        requestId,
-        url,
-        query
-      },
-      "DexScreener retry loop exhausted"
-    );
-
     return null;
   }
 
@@ -333,7 +323,9 @@ export class DexScreenerClient {
 
     if (
       !normalizedQuery ||
-      isBlockedBaseSymbol(normalizedQuery)
+      isBlockedBaseSymbol(
+        normalizedQuery
+      )
     ) {
       logger.debug(
         {
@@ -356,27 +348,13 @@ export class DexScreenerClient {
         query
       );
 
-    if (!payload) {
-      logger.warn(
-        {
-          query,
-          url
-        },
-        "DexScreener returned no payload"
-      );
-
-      return null;
-    }
-
-    if (
-      !payload.pairs ||
-      payload.pairs.length === 0
-    ) {
+    if (!payload?.pairs?.length) {
       logger.info(
         {
           query,
           url,
-          receivedPairs: 0
+          receivedPairs:
+            payload?.pairs?.length ?? 0
         },
         "DexScreener returned no pairs"
       );
@@ -384,255 +362,253 @@ export class DexScreenerClient {
       return null;
     }
 
-    const pairs = payload.pairs;
-
-    logger.debug(
-      {
-        query,
-        receivedPairs: pairs.length
-      },
-      "DexScreener pairs received"
-    );
-
     const now = Date.now();
 
     const maxPairAgeMs =
       config.dexMaxPairAgeHours *
       3_600_000;
 
-    // Нормализуем регистр конфигурации один раз.
     const preferredChains =
       config.dexPreferredChains.map(
-        (item) => item.trim().toLowerCase()
+        (item) =>
+          item.trim().toLowerCase()
       );
 
     const quotePriority =
       config.dexQuotePriority.map(
-        (item) => item.trim().toUpperCase()
+        (item) =>
+          item.trim().toUpperCase()
       );
 
-    logger.debug(
-      {
-        query,
-        preferredChains,
-        quotePriority
-      },
-      "DexScreener normalized filter configuration"
-    );
+    const candidates =
+      payload.pairs
+        .filter((pair) => {
+          const chainId =
+            (
+              pair.chainId ?? ""
+            )
+              .trim()
+              .toLowerCase();
 
-    const candidates = pairs
-      .filter((pair) => {
-        const chainId =
-          (
+          const quoteSymbol =
+            (
+              pair.quoteToken?.symbol ??
+              ""
+            )
+              .trim()
+              .toUpperCase();
+
+          const baseSymbol =
+            (
+              pair.baseToken?.symbol ??
+              ""
+            ).trim();
+
+          const liquidityUsd =
+            Number(
+              pair.liquidity?.usd ?? 0
+            );
+
+          const volumeM5 =
+            Number(
+              pair.volume?.m5 ?? 0
+            );
+
+          const buysM5 =
+            Number(
+              pair.txns?.m5?.buys ?? 0
+            );
+
+          const sellsM5 =
+            Number(
+              pair.txns?.m5?.sells ?? 0
+            );
+
+          const priceUsd =
+            Number(
+              pair.priceUsd ?? 0
+            );
+
+          const pairCreatedAt =
+            Number(
+              pair.pairCreatedAt ?? 0
+            );
+
+          if (
+            !preferredChains.includes(
+              chainId
+            )
+          ) {
+            return false;
+          }
+
+          if (
+            !quotePriority.includes(
+              quoteSymbol
+            )
+          ) {
+            return false;
+          }
+
+          if (
+            isBlockedBaseSymbol(
+              baseSymbol
+            )
+          ) {
+            return false;
+          }
+
+          if (
+            normalizeSymbol(baseSymbol) !==
+            normalizedQuery
+          ) {
+            return false;
+          }
+
+          if (
+            liquidityUsd <
+            config.dexMinLiquidityUsd
+          ) {
+            return false;
+          }
+
+          if (
+            volumeM5 <
+            config.dexMinVolumeM5Usd
+          ) {
+            return false;
+          }
+
+          // Исправленный фильтр:
+          // требуется минимум заданное количество
+          // и buys, и sells отдельно.
+          if (
+            buysM5 <
+              config.minDexBuysSellsM5 ||
+            sellsM5 <
+              config.minDexBuysSellsM5
+          ) {
+            return false;
+          }
+
+          if (!(priceUsd > 0)) {
+            return false;
+          }
+
+          if (
+            pairCreatedAt > 0 &&
+            now - pairCreatedAt >
+              maxPairAgeMs
+          ) {
+            return false;
+          }
+
+          return true;
+        })
+        .map((pair): DexPair => ({
+          chainId: (
             pair.chainId ?? ""
           )
             .trim()
-            .toLowerCase();
+            .toLowerCase(),
 
-        const quoteSymbol =
-          (
-            pair.quoteToken?.symbol ?? ""
-          )
-            .trim()
-            .toUpperCase();
+          dexId:
+            pair.dexId ?? "",
 
-        const baseSymbol =
-          (
-            pair.baseToken?.symbol ?? ""
-          ).trim();
+          pairAddress:
+            pair.pairAddress ?? "",
 
-        const liquidityUsd =
-          Number(
-            pair.liquidity?.usd ?? 0
-          );
+          baseTokenAddress:
+            pair.baseToken?.address ?? "",
 
-        const volumeM5 =
-          Number(
-            pair.volume?.m5 ?? 0
-          );
+          quoteTokenAddress:
+            pair.quoteToken?.address ?? "",
 
-        const buysM5 =
-          Number(
-            pair.txns?.m5?.buys ?? 0
-          );
+          baseSymbol:
+            pair.baseToken?.symbol ?? "",
 
-        const sellsM5 =
-          Number(
-            pair.txns?.m5?.sells ?? 0
-          );
+          quoteSymbol:
+            pair.quoteToken?.symbol ?? "",
 
-        const priceUsd =
-          Number(
-            pair.priceUsd ?? 0
-          );
+          liquidityUsd:
+            Number(
+              pair.liquidity?.usd ?? 0
+            ),
 
-        const pairCreatedAt =
-          Number(
-            pair.pairCreatedAt ?? 0
-          );
+          volumeM5:
+            Number(
+              pair.volume?.m5 ?? 0
+            ),
 
-        if (
-          !preferredChains.includes(
-            chainId
-          )
-        ) {
-          return false;
-        }
+          buysM5:
+            Number(
+              pair.txns?.m5?.buys ?? 0
+            ),
 
-        if (
-          !quotePriority.includes(
-            quoteSymbol
-          )
-        ) {
-          return false;
-        }
+          sellsM5:
+            Number(
+              pair.txns?.m5?.sells ?? 0
+            ),
 
-        if (
-          isBlockedBaseSymbol(baseSymbol)
-        ) {
-          return false;
-        }
+          priceUsd:
+            Number(
+              pair.priceUsd ?? 0
+            ),
 
-        if (
-          normalizeSymbol(baseSymbol) !==
-          normalizedQuery
-        ) {
-          return false;
-        }
+          pairCreatedAt:
+            Number(
+              pair.pairCreatedAt ?? 0
+            )
+        }))
+        .sort((a, b) => {
+          const quoteRankA =
+            quotePriority.indexOf(
+              a.quoteSymbol
+                .trim()
+                .toUpperCase()
+            );
 
-        if (
-          liquidityUsd <
-          config.dexMinLiquidityUsd
-        ) {
-          return false;
-        }
+          const quoteRankB =
+            quotePriority.indexOf(
+              b.quoteSymbol
+                .trim()
+                .toUpperCase()
+            );
 
-        if (
-          volumeM5 <
-          config.dexMinVolumeM5Usd
-        ) {
-          return false;
-        }
+          if (
+            quoteRankA !== quoteRankB
+          ) {
+            return (
+              quoteRankA -
+              quoteRankB
+            );
+          }
 
-        if (
-          buysM5 + sellsM5 <
-          config.minDexBuysSellsM5
-        ) {
-          return false;
-        }
-
-        if (!(priceUsd > 0)) {
-          return false;
-        }
-
-        if (
-          pairCreatedAt > 0 &&
-          now - pairCreatedAt >
-            maxPairAgeMs
-        ) {
-          return false;
-        }
-
-        return true;
-      })
-      .map((pair): DexPair => ({
-        chainId: (
-          pair.chainId ?? ""
-        )
-          .trim()
-          .toLowerCase(),
-
-        dexId:
-          pair.dexId ?? "",
-
-        pairAddress:
-          pair.pairAddress ?? "",
-
-        baseTokenAddress:
-          pair.baseToken?.address ?? "",
-
-        quoteTokenAddress:
-          pair.quoteToken?.address ?? "",
-
-        baseSymbol:
-          pair.baseToken?.symbol ?? "",
-
-        quoteSymbol:
-          pair.quoteToken?.symbol ?? "",
-
-        liquidityUsd: Number(
-          pair.liquidity?.usd ?? 0
-        ),
-
-        volumeM5: Number(
-          pair.volume?.m5 ?? 0
-        ),
-
-        buysM5: Number(
-          pair.txns?.m5?.buys ?? 0
-        ),
-
-        sellsM5: Number(
-          pair.txns?.m5?.sells ?? 0
-        ),
-
-        priceUsd: Number(
-          pair.priceUsd ?? 0
-        ),
-
-        pairCreatedAt: Number(
-          pair.pairCreatedAt ?? 0
-        )
-      }))
-      .sort((a, b) => {
-        const quoteRankA =
-          quotePriority.indexOf(
-            a.quoteSymbol
-              .trim()
-              .toUpperCase()
-          );
-
-        const quoteRankB =
-          quotePriority.indexOf(
-            b.quoteSymbol
-              .trim()
-              .toUpperCase()
-          );
-
-        if (
-          quoteRankA !== quoteRankB
-        ) {
-          return (
-            quoteRankA -
-            quoteRankB
-          );
-        }
-
-        if (
-          b.liquidityUsd !==
-          a.liquidityUsd
-        ) {
-          return (
-            b.liquidityUsd -
+          if (
+            b.liquidityUsd !==
             a.liquidityUsd
-          );
-        }
+          ) {
+            return (
+              b.liquidityUsd -
+              a.liquidityUsd
+            );
+          }
 
-        if (
-          b.volumeM5 !==
-          a.volumeM5
-        ) {
-          return (
-            b.volumeM5 -
+          if (
+            b.volumeM5 !==
             a.volumeM5
-          );
-        }
+          ) {
+            return (
+              b.volumeM5 -
+              a.volumeM5
+            );
+          }
 
-        return (
-          (b.pairCreatedAt ?? 0) -
-          (a.pairCreatedAt ?? 0)
-        );
-      });
+          return (
+            (b.pairCreatedAt ?? 0) -
+            (a.pairCreatedAt ?? 0)
+          );
+        });
 
     const best =
       candidates[0] ?? null;
@@ -640,8 +616,10 @@ export class DexScreenerClient {
     logger.info(
       {
         query,
-        receivedPairs: pairs.length,
-        validCandidates: candidates.length,
+        receivedPairs:
+          payload.pairs.length,
+        validCandidates:
+          candidates.length,
 
         selectedPair: best
           ? {
@@ -669,25 +647,6 @@ export class DexScreenerClient {
       "DexScreener pair selection completed"
     );
 
-    if (!best) {
-      logger.warn(
-        {
-          query,
-          receivedPairs: pairs.length,
-          normalizedQuery,
-          preferredChains,
-          quotePriority,
-          minLiquidityUsd:
-            config.dexMinLiquidityUsd,
-          minVolumeM5Usd:
-            config.dexMinVolumeM5Usd,
-          minBuysSellsM5:
-            config.minDexBuysSellsM5
-        },
-        "DexScreener returned pairs, but all were filtered out"
-      );
-    }
-
     return best;
   }
 
@@ -699,7 +658,9 @@ export class DexScreenerClient {
 
     if (
       !normalizedQuery ||
-      isBlockedBaseSymbol(normalizedQuery)
+      isBlockedBaseSymbol(
+        normalizedQuery
+      )
     ) {
       logger.debug(
         {
@@ -712,7 +673,6 @@ export class DexScreenerClient {
       return null;
     }
 
-    // Основной запрос.
     let pair =
       await this.findPairByQuery(query);
 
@@ -720,23 +680,14 @@ export class DexScreenerClient {
       return pair;
     }
 
-    // Fallback по алиасам.
     const aliases =
       this.getQueryAliases(query);
 
-    if (aliases.length > 0) {
-      logger.debug(
-        {
-          query,
-          aliases
-        },
-        "Trying DexScreener query aliases"
-      );
-    }
-
     for (const alias of aliases) {
       pair =
-        await this.findPairByQuery(alias);
+        await this.findPairByQuery(
+          alias
+        );
 
       if (pair) {
         logger.info(
@@ -774,12 +725,8 @@ export class DexScreenerClient {
 
     const aliases: string[] = [];
 
-    if (
-      base.startsWith("1000")
-    ) {
-      aliases.push(
-        base.slice(4)
-      );
+    if (base.startsWith("1000")) {
+      aliases.push(base.slice(4));
     }
 
     if (base === "SOL") {
@@ -892,7 +839,8 @@ export class DexScreenerClient {
         pair.dexId ?? "",
 
       pairAddress:
-        pair.pairAddress ?? pairAddress,
+        pair.pairAddress ??
+        pairAddress,
 
       baseTokenAddress:
         pair.baseToken?.address ?? "",
@@ -906,27 +854,32 @@ export class DexScreenerClient {
       quoteSymbol:
         pair.quoteToken?.symbol ?? "",
 
-      liquidityUsd: Number(
-        pair.liquidity?.usd ?? 0
-      ),
+      liquidityUsd:
+        Number(
+          pair.liquidity?.usd ?? 0
+        ),
 
-      volumeM5: Number(
-        pair.volume?.m5 ?? 0
-      ),
+      volumeM5:
+        Number(
+          pair.volume?.m5 ?? 0
+        ),
 
-      buysM5: Number(
-        pair.txns?.m5?.buys ?? 0
-      ),
+      buysM5:
+        Number(
+          pair.txns?.m5?.buys ?? 0
+        ),
 
-      sellsM5: Number(
-        pair.txns?.m5?.sells ?? 0
-      ),
+      sellsM5:
+        Number(
+          pair.txns?.m5?.sells ?? 0
+        ),
 
       priceUsd,
 
-      pairCreatedAt: Number(
-        pair.pairCreatedAt ?? 0
-      )
+      pairCreatedAt:
+        Number(
+          pair.pairCreatedAt ?? 0
+        )
     };
 
     logger.debug(
