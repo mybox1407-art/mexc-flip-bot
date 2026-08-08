@@ -55,6 +55,10 @@ interface SymbolState {
   cooldownUntil: number;
   lastSignalAt: number;
 
+  // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
+  lastLongSignalAt: number;
+  lastShortSignalAt: number;
+
   lastConfirmedDexUpdatedAt?: number;
 }
 
@@ -167,10 +171,11 @@ export class SpreadEngine {
     );
   }
 
+  // ✅ FIX #18: Возвращаем boolean
   updateDexPrice(
     symbol: string,
     pair: DexPair
-  ): void {
+  ): boolean {
     const now = Date.now();
 
     const snapshotKey =
@@ -188,7 +193,7 @@ export class SpreadEngine {
         "Invalid DEX pair snapshot, skipping"
       );
 
-      return;
+      return false;
     }
 
     this.dexSnapshots.set(
@@ -231,6 +236,8 @@ export class SpreadEngine {
       },
       "DEX snapshot saved"
     );
+
+    return true;
   }
 
   getAnchorStatus(
@@ -529,8 +536,15 @@ export class SpreadEngine {
 
     const now = Date.now();
 
+    // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
+    const lastSignalAt =
+      status.longSpreadPct >= status.shortSpreadPct
+        ? state.lastLongSignalAt
+        : state.lastShortSignalAt;
+
     if (
-      now < state.cooldownUntil
+      now - lastSignalAt <
+      config.signalCooldownMs
     ) {
       return null;
     }
@@ -561,6 +575,19 @@ export class SpreadEngine {
       return null;
     }
 
+    // ✅ FIX #13: Сначала проверяем тренд, потом выбираем направление
+    const longBlocked =
+      status.dexDirectionalDriftPct <
+      -config.maxDexDriftPct;
+
+    const shortBlocked =
+      status.dexDirectionalDriftPct >
+      config.maxDexDriftPct;
+
+    if (longBlocked && shortBlocked) {
+      return null;
+    }
+
     let direction: "LONG" | "SHORT";
     let spreadPct: number;
     let entryRef: "ASK" | "BID";
@@ -568,8 +595,10 @@ export class SpreadEngine {
 
     if (
       longValid &&
+      !longBlocked &&
       (
         !shortValid ||
+        shortBlocked ||
         status.longSpreadPct >=
           status.shortSpreadPct
       )
@@ -580,13 +609,18 @@ export class SpreadEngine {
       entryRef = "ASK";
       reason =
         "MEXC below DEX anchor";
-    } else {
+    } else if (
+      shortValid &&
+      !shortBlocked
+    ) {
       direction = "SHORT";
       spreadPct =
         status.shortSpreadPct;
       entryRef = "BID";
       reason =
         "MEXC above DEX anchor";
+    } else {
+      return null;
     }
 
     if (
@@ -716,8 +750,12 @@ export class SpreadEngine {
 
     state.lastSignalAt = now;
 
-    state.cooldownUntil =
-      now + config.signalCooldownMs;
+    // ✅ FIX #14: Раздельный cooldown для LONG/SHORT
+    if (direction === "LONG") {
+      state.lastLongSignalAt = now;
+    } else {
+      state.lastShortSignalAt = now;
+    }
 
     logger.warn(
       {
@@ -884,7 +922,11 @@ export class SpreadEngine {
         confirmCount: 0,
         firstConfirmAt: 0,
         cooldownUntil: 0,
-        lastSignalAt: 0
+        lastSignalAt: 0,
+        lastLongSignalAt: 0,  // ✅
+        lastShortSignalAt: 0,  // ✅
+        lastConfirmedDexUpdatedAt:
+          undefined
       };
 
       this.states.set(symbol, state);
