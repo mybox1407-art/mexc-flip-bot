@@ -1,4 +1,5 @@
 export interface MexcContract {
+  contractId?: number | string;
   symbol: string;
   displayName?: string;
   baseCoin?: string;
