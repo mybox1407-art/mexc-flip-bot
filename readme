@@ -15,3 +15,4 @@ docker compose logs -f mexc-flip-bot
 История src/services/paper-execution.ts
 
 Версия Aug_3_2026_17_25 - Не собирается 
+Вресия Aug_7_2026_11_25_v1 - Не собирается
