@@ -11,4 +11,7 @@ npm install
 
 docker compose logs -f mexc-flip-bot
 
-Aug_3_2026_17_25 - Не собирается 
+
+История src/services/paper-execution.ts
+
+Версия Aug_3_2026_17_25 - Не собирается 
