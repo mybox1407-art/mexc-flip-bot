@@ -10,3 +10,5 @@ docker compose up -d --build
 npm install
 
 docker compose logs -f mexc-flip-bot
+
+Aug_3_2026_17_25 - Не собирается 
