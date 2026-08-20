@@ -82,12 +82,6 @@ export interface FlipSignal {
   dexDirectionalDriftPct: number;
   confirmCount: number;
   reason: string;
-
-  rawSpreadPct: number;
-  requiredEdgePct: number;
-  spreadSlopePct?: number;
-  signalAgeMs: number;
-  rejectReason?: string;
 }
 
 export interface PaperTrade {
@@ -119,6 +113,7 @@ export interface PaperTrade {
 
   depositAtEntry: number;
 
+  // 0.3 = 30%, 0.003 = 0.3%
   allocationPct: number;
 
   depositAfterClose?: number;
@@ -142,14 +137,6 @@ export interface PaperTrade {
 
   openReason: string;
   closeReason?: CloseReason;
-
-  entryFeePct?: number;
-  exitFeePct?: number;
-  entrySlippagePct?: number;
-  exitSlippagePct?: number;
-  totalCostPct?: number;
-  stopPrice?: number;
-  stopDistancePct?: number;
 }
 
 export interface ContractWatchState {
