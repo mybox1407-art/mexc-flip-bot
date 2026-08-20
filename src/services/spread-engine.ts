@@ -82,7 +82,7 @@ function normalizeSymbol(
   return String(value)
     .trim()
     .toUpperCase()
-    .replace(/[_\-\/\s]/g, "");
+    .replace(/[_\-/\s]/g, "");
 }
 
 function round(
@@ -732,6 +732,13 @@ export class SpreadEngine {
       return null;
     }
 
+    /**
+     * LONG запрещён, если MEXC
+     * падает быстрее порога.
+     *
+     * SHORT запрещён, если MEXC
+     * растёт быстрее порога.
+     */
     const longBlocked =
       status.dexDirectionalDriftPct <
         -config.maxDexDriftPct ||
@@ -947,28 +954,6 @@ export class SpreadEngine {
       return null;
     }
 
-    const signalAgeMs =
-      now - state.firstConfirmAt;
-
-    const confirmedByTime =
-      signalAgeMs >=
-      config.signalConfirmMs;
-
-    if (!confirmedByTime) {
-      logger.debug(
-        {
-          symbol: ticker.symbol,
-          confirmCount: state.confirmCount,
-          signalAgeMs,
-          requiredTicks: config.signalConfirmTicks,
-          requiredMs: config.signalConfirmMs
-        },
-        "Signal not confirmed: time or ticks insufficient"
-      );
-
-      return null;
-    }
-
     if (
       !Number.isFinite(spreadPct) ||
       spreadPct <= 0
@@ -976,35 +961,35 @@ export class SpreadEngine {
       return null;
     }
 
-    const feeCostPct =
-      config.mexcEntryFeePct +
-      config.mexcExitFeePct;
+    const totalCostsPct =
+      config.roundTripCostPct;
 
-    const slippageBufferPct =
-      config.mexcEntrySlippagePct +
-      config.mexcExitSlippagePct;
-
-    const requiredEdgePct =
-      feeCostPct +
-      slippageBufferPct +
-      config.minTargetNetPct;
-
-    const excessEdgePct =
+    const netEdgePct =
       spreadPct -
-      requiredEdgePct;
+      totalCostsPct;
 
-    if (excessEdgePct < 0) {
+    if (
+      !Number.isFinite(netEdgePct) ||
+      netEdgePct <
+        config.minNetEdgePct
+    ) {
       logger.debug(
         {
-          symbol: ticker.symbol,
+          symbol:
+            ticker.symbol,
+
           direction,
+
           spreadPct,
-          feeCostPct,
-          slippageBufferPct,
-          requiredEdgePct,
-          excessEdgePct
+
+          totalCostsPct,
+
+          netEdgePct,
+
+          minNetEdge:
+            config.minNetEdgePct
         },
-        "Signal skipped: insufficient edge after fees and slippage"
+        "Net edge too low"
       );
 
       return null;
@@ -1034,7 +1019,7 @@ export class SpreadEngine {
           spreadPct.toFixed(4),
 
         netEdgePct:
-          excessEdgePct.toFixed(4),
+          netEdgePct.toFixed(4),
 
         dexPrice:
           status.dexPrice.toFixed(6),
@@ -1075,7 +1060,7 @@ export class SpreadEngine {
         round(spreadPct),
 
       netEdgePct:
-        round(excessEdgePct),
+        round(netEdgePct),
 
       priceDeviationPct:
         round(spreadPct),
@@ -1181,11 +1166,7 @@ export class SpreadEngine {
       confirmCount:
         state.confirmCount,
 
-      reason,
-
-      rawSpreadPct: spreadPct,
-      requiredEdgePct,
-      signalAgeMs
+      reason
     };
   }
 
