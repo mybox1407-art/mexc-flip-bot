@@ -77,7 +77,6 @@ export const config = {
     "https://api.mexc.com"
   ),
 
-  // ✅ FIX #3: Новый MEXC WebSocket endpoint
   mexcWsUrl: requireEnv(
     "MEXC_WS_URL",
     "wss://contract.mexc.com/edge"
@@ -124,7 +123,6 @@ export const config = {
     20
   ),
 
-  // ✅ FIX #9: Уменьшено с 400 до 200
   startupBackfillLimit: numberEnv(
     "STARTUP_BACKFILL_LIMIT",
     200
@@ -163,6 +161,11 @@ export const config = {
   signalConfirmTicks: numberEnv(
     "SIGNAL_CONFIRM_TICKS",
     3
+  ),
+
+  signalConfirmMs: numberEnv(
+    "SIGNAL_CONFIRM_MS",
+    750
   ),
 
   signalCooldownMs: numberEnv(
@@ -332,10 +335,24 @@ export const config = {
       2.0
     ),
 
-  // ✅ FIX #12: Увеличено с 50 до 75
   paperMaxLiquidityDropPct:
     numberEnv(
       "PAPER_MAX_LIQUIDITY_DROP_PCT",
       75
-    )
+    ),
+
+  spreadSlopeWindowMs: numberEnv(
+    "SPREAD_SLOPE_WINDOW_MS",
+    1_500
+  ),
+
+  maxAdverseSpreadExpansionPct: numberEnv(
+    "MAX_ADVERSE_SPREAD_EXPANSION_PCT",
+    0.15
+  ),
+
+  minTargetNetPct: numberEnv(
+    "MIN_TARGET_NET_PCT",
+    0.20
+  )
 } as const;
