@@ -54,6 +54,13 @@ interface DexSearchResponse {
   }>;
 }
 
+/**
+ * DexScreener принимает до 30
+ * адресов пар в одном запросе:
+ * /pairs/{chainId}/{addr1,...,addr30}
+ */
+const MAX_PAIRS_PER_BATCH_REQUEST = 30;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -848,6 +855,192 @@ export class DexScreenerClient {
       },
       "DexScreener pair fetched"
     );
+
+    return result;
+  }
+
+  /**
+   * Batch-получение нескольких пар
+   * одной сети за один HTTP-запрос.
+   *
+   * DexScreener принимает до 30
+   * адресов через запятую:
+   * /pairs/{chainId}/{addr1,addr2,...}
+   *
+   * Возвращает Map, ключ —
+   * pairAddress в нижнем регистре.
+   */
+  async getPairsByChainAndAddresses(
+    chainId: string,
+    pairAddresses: string[]
+  ): Promise<Map<string, DexPair>> {
+    const result =
+      new Map<string, DexPair>();
+
+    const uniqueAddresses = [
+      ...new Set(
+        pairAddresses
+          .map((address) =>
+            address.trim()
+          )
+          .filter(
+            (address) =>
+              address.length > 0
+          )
+      )
+    ];
+
+    if (uniqueAddresses.length === 0) {
+      return result;
+    }
+
+    for (
+      let offset = 0;
+      offset < uniqueAddresses.length;
+      offset +=
+        MAX_PAIRS_PER_BATCH_REQUEST
+    ) {
+      const chunk =
+        uniqueAddresses.slice(
+          offset,
+          offset +
+            MAX_PAIRS_PER_BATCH_REQUEST
+        );
+
+      /**
+       * Важно: encodeURIComponent
+       * применяется к каждому адресу
+       * отдельно, запятая-разделитель
+       * не кодируется.
+       */
+      const url =
+        `${this.baseUrl}/pairs/` +
+        `${encodeURIComponent(chainId)}/` +
+        chunk
+          .map((address) =>
+            encodeURIComponent(address)
+          )
+          .join(",");
+
+      const payload =
+        await this.fetchJsonWithRetry(
+          url,
+          `${chainId} batch ${chunk.length}`
+        );
+
+      if (!payload?.pairs?.length) {
+        logger.warn(
+          {
+            chainId,
+            requested:
+              chunk.length,
+            url
+          },
+          "DexScreener batch endpoint returned no pairs"
+        );
+
+        continue;
+      }
+
+      let matched = 0;
+
+      for (const rawPair of payload.pairs) {
+        const priceUsd =
+          Number(
+            rawPair.priceUsd ?? 0
+          );
+
+        const pairAddress =
+          rawPair.pairAddress ?? "";
+
+        if (
+          !pairAddress ||
+          !(priceUsd > 0)
+        ) {
+          continue;
+        }
+
+        result.set(
+          pairAddress.toLowerCase(),
+          {
+            chainId: (
+              rawPair.chainId ??
+              chainId
+            )
+              .trim()
+              .toLowerCase(),
+
+            dexId:
+              rawPair.dexId ?? "",
+
+            pairAddress,
+
+            baseTokenAddress:
+              rawPair.baseToken
+                ?.address ?? "",
+
+            quoteTokenAddress:
+              rawPair.quoteToken
+                ?.address ?? "",
+
+            baseSymbol:
+              rawPair.baseToken
+                ?.symbol ?? "",
+
+            quoteSymbol:
+              rawPair.quoteToken
+                ?.symbol ?? "",
+
+            liquidityUsd:
+              Number(
+                rawPair.liquidity
+                  ?.usd ?? 0
+              ),
+
+            volumeM5:
+              Number(
+                rawPair.volume?.m5 ??
+                  0
+              ),
+
+            buysM5:
+              Number(
+                rawPair.txns?.m5
+                  ?.buys ?? 0
+              ),
+
+            sellsM5:
+              Number(
+                rawPair.txns?.m5
+                  ?.sells ?? 0
+              ),
+
+            priceUsd,
+
+            pairCreatedAt:
+              Number(
+                rawPair
+                  .pairCreatedAt ??
+                  0
+              )
+          }
+        );
+
+        matched += 1;
+      }
+
+      logger.debug(
+        {
+          chainId,
+          requested:
+            chunk.length,
+          received:
+            payload.pairs.length,
+          matched
+        },
+        "DexScreener batch pairs fetched"
+      );
+    }
 
     return result;
   }
