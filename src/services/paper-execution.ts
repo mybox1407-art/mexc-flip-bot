@@ -262,20 +262,33 @@ export class PaperExecutionService {
   private getStopExecutionPrice(
     trade: PaperTrade
   ): number {
+    const stopPrice =
+      trade.stopPrice;
+  
+    if (
+      !isFinitePositive(
+        stopPrice
+      )
+    ) {
+      throw new Error(
+        `Invalid stop price for trade ${trade.id}`
+      );
+    }
+  
     const slippagePct =
       this.getStopSlippagePct();
-
+  
     if (
       trade.direction === "LONG"
     ) {
       return (
-        trade.stopPrice *
+        stopPrice *
         (1 - slippagePct / 100)
       );
     }
-
+  
     return (
-      trade.stopPrice *
+      stopPrice *
       (1 + slippagePct / 100)
     );
   }
