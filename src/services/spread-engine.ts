@@ -4,7 +4,7 @@ import { logger } from "../logger.js";
 
 import type {
   FlipSignal,
-  MexcTicker
+  MexcTicker,
 } from "../types.js";
 
 import type { DexPair } from "../mexc/dexscreener.js";
@@ -76,870 +76,281 @@ const MEXC_TREND_BLOCK_PCT = 0.3;
 
 const MIN_HISTORY_POINTS = 2;
 
-function normalizeSymbol(
-  value: string
-): string {
-  return String(value)
-    .trim()
-    .toUpperCase()
-    .replace(/[_\-/\s]/g, "");
+function normalizeSymbol(value: string): string {
+  return String(value).trim().toUpperCase().replace(/[_\-/\s]/g, "");
 }
 
-function round(
-  value: number,
-  digits = 3
-): number {
+function round(value: number, digits = 3): number {
   const factor = 10 ** digits;
-
-  return (
-    Math.round(value * factor) /
-    factor
-  );
+  return Math.round(value * factor) / factor;
 }
 
-function isPositiveFinite(
-  value: unknown
-): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
-    value > 0
-  );
+function isPositiveFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function isNonNegativeFinite(
-  value: unknown
-): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
-    value >= 0
-  );
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-function getAnchorDeviationPct(
-  dexPrice: number,
-  mexcPrice: number
-): number {
-  if (
-    !isPositiveFinite(dexPrice) ||
-    !isPositiveFinite(mexcPrice)
-  ) {
-    return Infinity;
-  }
-
-  return (
-    Math.abs(dexPrice - mexcPrice) /
-    mexcPrice *
-    100
-  );
+function getAnchorDeviationPct(dexPrice: number, mexcPrice: number): number {
+  if (!isPositiveFinite(dexPrice) || !isPositiveFinite(mexcPrice)) return Infinity;
+  return (Math.abs(dexPrice - mexcPrice) / mexcPrice) * 100;
 }
 
-function isValidDexAnchor(
-  dexPrice: number,
-  mexcPrice: number
-): boolean {
-  const deviationPct =
-    getAnchorDeviationPct(
-      dexPrice,
-      mexcPrice
-    );
-
-  return (
-    Number.isFinite(deviationPct) &&
-    deviationPct <=
-      config.maxPriceDeviationPct
-  );
+function isValidDexAnchor(dexPrice: number, mexcPrice: number): boolean {
+  const deviationPct = getAnchorDeviationPct(dexPrice, mexcPrice);
+  return Number.isFinite(deviationPct) && deviationPct <= config.maxPriceDeviationPct;
 }
 
 export class SpreadEngine {
-  private readonly dexSnapshots =
-    new Map<string, DexSnapshot>();
-
-  private readonly states =
-    new Map<string, SymbolState>();
-
+  private readonly dexSnapshots = new Map<string, DexSnapshot>();
+  private readonly states = new Map<string, SymbolState>();
   private readonly dexMapper: DexMapper;
 
-  constructor(
-    dexMapper: DexMapper
-  ) {
+  constructor(dexMapper: DexMapper) {
     this.dexMapper = dexMapper;
   }
 
-  private getSnapshotKey(
-    symbol: string
-  ): string {
+  private getSnapshotKey(symbol: string): string {
     return normalizeSymbol(symbol);
   }
 
-  private getContractMultiplier(
-    symbol: string
-  ): number {
-    const mapping =
-      this.dexMapper.get(symbol);
-
-    const multiplier =
-      Number(
-        mapping?.contractMultiplier ?? 1
-      );
-
-    if (
-      !Number.isFinite(multiplier) ||
-      multiplier <= 0
-    ) {
-      return 1;
-    }
-
-    return multiplier;
+  private getContractMultiplier(symbol: string): number {
+    const mapping = this.dexMapper.get(symbol);
+    const multiplier = Number(mapping?.contractMultiplier ?? 1);
+    return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
   }
 
-  private normalizeDexPrice(
-    symbol: string,
-    rawDexPrice: number
-  ): number {
-    const multiplier =
-      this.getContractMultiplier(symbol);
-
-    return rawDexPrice * multiplier;
+  private normalizeDexPrice(symbol: string, rawDexPrice: number): number {
+    return rawDexPrice * this.getContractMultiplier(symbol);
   }
 
-  updateDexPrice(
-    symbol: string,
-    pair: DexPair
-  ): boolean {
+  // ------------------------------ PUBLIC ------------------------------
+
+  updateDexPrice(symbol: string, pair: DexPair): boolean {
     const now = Date.now();
+    const snapshotKey = this.getSnapshotKey(symbol);
 
-    const snapshotKey =
-      this.getSnapshotKey(symbol);
-
-    if (
-      !this.isValidDexPair(pair)
-    ) {
-      logger.warn(
-        {
-          symbol,
-          snapshotKey,
-          priceUsd:
-            pair.priceUsd,
-          liquidityUsd:
-            pair.liquidityUsd,
-          volumeM5:
-            pair.volumeM5
-        },
-        "Invalid DEX pair snapshot, skipping"
-      );
-
+    if (!this.isValidDexPair(pair)) {
+      logger.warn({ symbol, snapshotKey, priceUsd: pair.priceUsd, liquidityUsd: pair.liquidityUsd, volumeM5: pair.volumeM5 }, "Invalid DEX pair snapshot, skipping");
       return false;
     }
 
-    const contractMultiplier =
-      this.getContractMultiplier(symbol);
-
-    const normalizedDexPrice =
-      this.normalizeDexPrice(
-        symbol,
-        pair.priceUsd
-      );
-
-    if (
-      !isPositiveFinite(
-        normalizedDexPrice
-      )
-    ) {
-      logger.warn(
-        {
-          symbol,
-          snapshotKey,
-          rawDexPrice:
-            pair.priceUsd,
-          contractMultiplier,
-          normalizedDexPrice
-        },
-        "Invalid normalized DEX price, skipping"
-      );
-
+    const normalizedDexPrice = this.normalizeDexPrice(symbol, pair.priceUsd);
+    if (!isPositiveFinite(normalizedDexPrice)) {
+      logger.warn({ symbol, snapshotKey, rawDexPrice: pair.priceUsd, contractMultiplier: this.getContractMultiplier(symbol), normalizedDexPrice }, "Invalid normalized DEX price, skipping");
       return false;
     }
 
-    const normalizedPair: DexPair = {
-      ...pair,
-      priceUsd:
-        normalizedDexPrice
-    };
+    const normalizedPair: DexPair = { ...pair, priceUsd: normalizedDexPrice };
+    this.dexSnapshots.set(snapshotKey, { ...normalizedPair, updatedAt: now });
 
-    this.dexSnapshots.set(
-      snapshotKey,
-      {
-        ...normalizedPair,
-        updatedAt: now
-      }
-    );
+    const state = this.getState(snapshotKey);
+    state.dexHistory.push({ price: normalizedDexPrice, ts: now });
+    const cutoff = now - DEX_HISTORY_WINDOW_MS;
+    state.dexHistory = state.dexHistory.filter((item) => item.ts >= cutoff);
 
-    const state =
-      this.getState(snapshotKey);
-
-    state.dexHistory.push({
-      price:
-        normalizedDexPrice,
-      ts: now
-    });
-
-    const cutoff =
-      now - DEX_HISTORY_WINDOW_MS;
-
-    state.dexHistory =
-      state.dexHistory.filter(
-        (item) =>
-          item.ts >= cutoff
-      );
-
-    logger.info(
-      {
-        symbol,
-        snapshotKey,
-
-        rawPrice:
-          pair.priceUsd,
-
-        normalizedPrice:
-          normalizedDexPrice,
-
-        contractMultiplier,
-
-        liquidity:
-          pair.liquidityUsd.toFixed(0),
-
-        volumeM5:
-          pair.volumeM5.toFixed(0),
-
-        buysM5:
-          pair.buysM5,
-
-        sellsM5:
-          pair.sellsM5,
-
-        historySize:
-          state.dexHistory.length
-      },
-      "DEX snapshot saved"
-    );
+    logger.info({
+      symbol, snapshotKey, rawPrice: pair.priceUsd, normalizedPrice: normalizedDexPrice,
+      contractMultiplier: this.getContractMultiplier(symbol),
+      liquidity: pair.liquidityUsd.toFixed(0), volumeM5: pair.volumeM5.toFixed(0),
+      buysM5: pair.buysM5, sellsM5: pair.sellsM5, historySize: state.dexHistory.length
+    }, "DEX snapshot saved");
 
     return true;
   }
 
-  getAnchorStatus(
-    ticker: MexcTicker
-  ): AnchorStatus | null {
-    const tickerSymbol =
-      String(ticker.symbol);
+  getAnchorStatus(ticker: MexcTicker): AnchorStatus | null {
+    const tickerSymbol = String(ticker.symbol);
+    const snapshotKey = this.getSnapshotKey(tickerSymbol);
+    const mapping = this.dexMapper.get(tickerSymbol);
 
-    const snapshotKey =
-      this.getSnapshotKey(
-        tickerSymbol
-      );
-
-    const mapping =
-      this.dexMapper.get(
-        tickerSymbol
-      );
-
-    if (
-      !mapping ||
-      mapping.status !== "active"
-    ) {
-      logger.debug(
-        {
-          tickerSymbol,
-          mappingStatus:
-            mapping?.status,
-          snapshotKey
-        },
-        "No active DEX mapping"
-      );
-
+    if (!mapping || mapping.status !== "active") {
+      logger.debug({ tickerSymbol, mappingStatus: mapping?.status, snapshotKey }, "No active DEX mapping");
       return null;
     }
 
-    const anchor =
-      this.dexSnapshots.get(
-        snapshotKey
-      );
-
-    if (!anchor) {
-      return null;
-    }
-
-    if (
-      !this.isValidDexPair(anchor)
-    ) {
-      logger.warn(
-        {
-          tickerSymbol,
-          snapshotKey,
-          priceUsd:
-            anchor.priceUsd,
-          liquidityUsd:
-            anchor.liquidityUsd,
-          volumeM5:
-            anchor.volumeM5
-        },
-        "Invalid DEX snapshot"
-      );
-
+    const anchor = this.dexSnapshots.get(snapshotKey);
+    if (!anchor || !this.isValidDexPair(anchor)) {
+      logger.warn({ tickerSymbol, snapshotKey, priceUsd: anchor?.priceUsd, liquidityUsd: anchor?.liquidityUsd, volumeM5: anchor?.volumeM5 }, "Invalid DEX snapshot");
       return null;
     }
 
     const now = Date.now();
+    const anchorAgeMs = Math.max(0, now - anchor.updatedAt);
 
-    const anchorAgeMs =
-      Math.max(
-        0,
-        now - anchor.updatedAt
-      );
+    const mexcBid = Number(ticker.bid1);
+    const mexcAsk = Number(ticker.ask1);
+    const mexcLast = Number(ticker.lastPrice);
+    const mexcTurnover24h = Number(ticker.amount24);
 
-    const mexcBid =
-      Number(ticker.bid1);
-
-    const mexcAsk =
-      Number(ticker.ask1);
-
-    const mexcLast =
-      Number(ticker.lastPrice);
-
-    const mexcTurnover24h =
-      Number(ticker.amount24);
-
-    if (
-      !isPositiveFinite(mexcBid) ||
-      !isPositiveFinite(mexcAsk) ||
-      !isPositiveFinite(mexcLast)
-    ) {
+    if (!isPositiveFinite(mexcBid) || !isPositiveFinite(mexcAsk) || !isPositiveFinite(mexcLast)) return null;
+    if (mexcAsk < mexcBid) {
+      logger.warn({ tickerSymbol, mexcBid, mexcAsk }, "Crossed MEXC book");
       return null;
     }
 
-    if (
-      mexcAsk < mexcBid
-    ) {
-      logger.warn(
-        {
-          tickerSymbol,
-          mexcBid,
-          mexcAsk
-        },
-        "Crossed MEXC book"
-      );
+    const mexcMid = (mexcBid + mexcAsk) / 2;
+    if (!isPositiveFinite(mexcMid)) return null;
 
+    const state = this.getState(snapshotKey);
+    this.recordMexcPrice(state, mexcMid, ticker.timestamp, now);
+
+    // ---- NEW: OLS trend slopes (% per minute) ----
+    const dexTrendPct = this.calculateTrendSlope(state.dexHistory, config.dexTrendWindowMs);
+    const mexcTrendPct = this.calculateTrendSlope(state.mexcHistory, config.dexTrendWindowMs);
+
+    // Legacy drift (range + first/last) — kept for compatibility
+    const dexDrift = this.calculateDexDrift(state.dexHistory);
+
+    const dexPrice = anchor.priceUsd;
+    if (!isValidDexAnchor(dexPrice, mexcMid)) {
+      const deviationPct = getAnchorDeviationPct(dexPrice, mexcMid);
+      logger.debug({ symbol: tickerSymbol, dexPrice, mexcMid, deviationPct, maxDeviationPct: config.maxPriceDeviationPct }, "DEX anchor deviation too high");
       return null;
     }
 
-    const mexcMid =
-      (mexcBid + mexcAsk) / 2;
-
-    if (
-      !isPositiveFinite(mexcMid)
-    ) {
-      return null;
-    }
-
-    const state =
-      this.getState(snapshotKey);
-
-    this.recordMexcPrice(
-      state,
-      mexcMid,
-      ticker.timestamp,
-      now
-    );
-
-    const dexDrift =
-      this.calculateDexDrift(
-        state.dexHistory
-      );
-
-    const mexcDirectionalDriftPct =
-      this.calculateMexcTrend(
-        state.mexcHistory
-      );
-
-    const dexPrice =
-      anchor.priceUsd;
-
-    if (
-      !isValidDexAnchor(
-        dexPrice,
-        mexcMid
-      )
-    ) {
-      const deviationPct =
-        getAnchorDeviationPct(
-          dexPrice,
-          mexcMid
-        );
-
-      logger.debug(
-        {
-          symbol: tickerSymbol,
-          dexPrice,
-          mexcMid,
-          deviationPct,
-          maxDeviationPct:
-            config.maxPriceDeviationPct
-        },
-        "DEX anchor deviation too high"
-      );
-
-      return null;
-    }
-
-    const mexcBookSpreadPct =
-      (
-        (mexcAsk - mexcBid) /
-        mexcMid
-      ) * 100;
-
-    const longSpreadPct =
-      (
-        (dexPrice - mexcAsk) /
-        mexcAsk
-      ) * 100;
-
-    const shortSpreadPct =
-      (
-        (mexcBid - dexPrice) /
-        mexcBid
-      ) * 100;
+    const mexcBookSpreadPct = ((mexcAsk - mexcBid) / mexcMid) * 100;
+    const longSpreadPct = ((dexPrice - mexcAsk) / mexcAsk) * 100;
+    const shortSpreadPct = ((mexcBid - dexPrice) / mexcBid) * 100;
 
     return {
-      symbol:
-        tickerSymbol,
-
+      symbol: tickerSymbol,
       dexPrice,
-
-      dexLiquidityUsd:
-        anchor.liquidityUsd,
-
-      dexVolumeM5:
-        anchor.volumeM5,
-
-      dexBuysM5:
-        anchor.buysM5,
-
-      dexSellsM5:
-        anchor.sellsM5,
-
-      dexId:
-        anchor.dexId,
-
-      chainId:
-        anchor.chainId,
-
-      quoteSymbol:
-        anchor.quoteSymbol,
-
-      dexPairAddress:
-        anchor.pairAddress,
-
+      dexLiquidityUsd: anchor.liquidityUsd,
+      dexVolumeM5: anchor.volumeM5,
+      dexBuysM5: anchor.buysM5,
+      dexSellsM5: anchor.sellsM5,
+      dexId: anchor.dexId,
+      chainId: anchor.chainId,
+      quoteSymbol: anchor.quoteSymbol,
+      dexPairAddress: anchor.pairAddress,
       anchorAgeMs,
-
-      dexUpdatedAt:
-        anchor.updatedAt,
-
-      dexDriftPct:
-        dexDrift.rangePct,
-
-      dexDirectionalDriftPct:
-        dexDrift.directionalPct,
-
-      mexcBid,
-      mexcAsk,
-      mexcLast,
-
-      mexcTurnover24h:
-        isNonNegativeFinite(
-          mexcTurnover24h
-        )
-          ? mexcTurnover24h
-          : 0,
-
+      dexUpdatedAt: anchor.updatedAt,
+      dexDriftPct: dexDrift.rangePct,
+      dexDirectionalDriftPct: dexDrift.directionalPct, // legacy
+      mexcBid, mexcAsk, mexcLast,
+      mexcTurnover24h: isNonNegativeFinite(mexcTurnover24h) ? mexcTurnover24h : 0,
       mexcBookSpreadPct,
       longSpreadPct,
-      shortSpreadPct
+      shortSpreadPct,
+      // NEW: trend slopes for filters
+      dexTrendPct,
+      mexcTrendPct,
     };
   }
 
-  evaluate(
-    ticker: MexcTicker
-  ): FlipSignal | null {
-    const status =
-      this.getAnchorStatus(
-        ticker
-      );
+  evaluate(ticker: MexcTicker): FlipSignal | null {
+    const status = this.getAnchorStatus(ticker);
+    if (!status) return null;
 
-    if (!status) {
+    const snapshotKey = this.getSnapshotKey(ticker.symbol);
+    const state = this.getState(snapshotKey);
+
+    if (state.dexHistory.length < MIN_HISTORY_POINTS) return null;
+    if (state.mexcHistory.length < MIN_HISTORY_POINTS) {
+      logger.debug({ symbol: ticker.symbol, mexcHistorySize: state.mexcHistory.length, minimum: MIN_HISTORY_POINTS }, "MEXC history is not ready");
       return null;
     }
 
-    const snapshotKey =
-      this.getSnapshotKey(
-        ticker.symbol
-      );
-
-    const state =
-      this.getState(snapshotKey);
-
-    if (
-      state.dexHistory.length <
-      MIN_HISTORY_POINTS
-    ) {
+    if (status.anchorAgeMs > config.maxDexAnchorAgeMs) {
+      logger.debug({ symbol: ticker.symbol, anchorAgeMs: status.anchorAgeMs, maxAge: config.maxDexAnchorAgeMs }, "DEX anchor is stale");
       return null;
     }
 
-    if (
-      state.mexcHistory.length <
-      MIN_HISTORY_POINTS
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          mexcHistorySize:
-            state.mexcHistory.length,
-
-          minimum:
-            MIN_HISTORY_POINTS
-        },
-        "MEXC history is not ready"
-      );
-
+    if (status.dexLiquidityUsd < config.dexMinLiquidityUsd) return null;
+    if (status.dexVolumeM5 < config.dexMinVolumeM5Usd) return null;
+    if (status.dexBuysM5 < config.minDexBuysSellsM5 || status.dexSellsM5 < config.minDexBuysSellsM5) {
+      logger.debug({ symbol: ticker.symbol, buysM5: status.dexBuysM5, sellsM5: status.dexSellsM5, minimum: config.minDexBuysSellsM5 }, "DEX buys/sells activity too low");
       return null;
     }
 
-    if (
-      status.anchorAgeMs >
-      config.maxDexAnchorAgeMs
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+    if (status.mexcTurnover24h < config.minMexcTurnover24h) return null;
+    if (status.mexcBookSpreadPct > config.maxMexcBookSpreadPct) return null;
+    if (status.dexDriftPct > config.maxDexDriftPct) return null;
 
-          anchorAgeMs:
-            status.anchorAgeMs,
+    // ---- NEW: DEX trend block ----
+    const trendBlockPct = config.dexTrendBlockPct;
+    const longBlockedByDexTrend = status.dexTrendPct > trendBlockPct;
+    const shortBlockedByDexTrend = status.dexTrendPct < -trendBlockPct;
 
-          maxAge:
-            config.maxDexAnchorAgeMs
-        },
-        "DEX anchor is stale"
-      );
+    const longValid = Number.isFinite(status.longSpreadPct) && status.longSpreadPct >= config.minSpreadPct;
+    const shortValid = Number.isFinite(status.shortSpreadPct) && status.shortSpreadPct >= config.minSpreadPct;
 
-      return null;
-    }
+    // Legacy MEXC trend block (kept)
+    const mexcDirectionalDriftPct = status.mexcTrendPct; // reuse new slope
+    const longBlocked = status.dexDirectionalDriftPct < -config.maxDexDriftPct || mexcDirectionalDriftPct < -MEXC_TREND_BLOCK_PCT;
+    const shortBlocked = status.dexDirectionalDriftPct > config.maxDexDriftPct || mexcDirectionalDriftPct > MEXC_TREND_BLOCK_PCT;
 
-    if (
-      status.dexLiquidityUsd <
-      config.dexMinLiquidityUsd
-    ) {
-      return null;
-    }
+    // Combine blocks
+    const longBlockedFinal = longBlocked || longBlockedByDexTrend;
+    const shortBlockedFinal = shortBlocked || shortBlockedByDexTrend;
 
-    if (
-      status.dexVolumeM5 <
-      config.dexMinVolumeM5Usd
-    ) {
-      return null;
-    }
-
-    if (
-      status.dexBuysM5 <
-        config.minDexBuysSellsM5 ||
-      status.dexSellsM5 <
-        config.minDexBuysSellsM5
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          buysM5:
-            status.dexBuysM5,
-
-          sellsM5:
-            status.dexSellsM5,
-
-          minimum:
-            config.minDexBuysSellsM5
-        },
-        "DEX buys/sells activity too low"
-      );
-
-      return null;
-    }
-
-    if (
-      status.mexcTurnover24h <
-      config.minMexcTurnover24h
-    ) {
-      return null;
-    }
-
-    if (
-      status.mexcBookSpreadPct >
-      config.maxMexcBookSpreadPct
-    ) {
-      return null;
-    }
-
-    if (
-      status.dexDriftPct >
-      config.maxDexDriftPct
-    ) {
-      return null;
-    }
-
-    const mexcDirectionalDriftPct =
-      this.calculateMexcTrend(
-        state.mexcHistory
-      );
-
-    const longValid =
-      Number.isFinite(
-        status.longSpreadPct
-      ) &&
-      status.longSpreadPct >=
-        config.minSpreadPct;
-
-    const shortValid =
-      Number.isFinite(
-        status.shortSpreadPct
-      ) &&
-      status.shortSpreadPct >=
-        config.minSpreadPct;
-
-    if (
-      !longValid &&
-      !shortValid
-    ) {
-      state.lastDirection =
-        undefined;
-
+    if (!longValid && !shortValid) {
+      state.lastDirection = undefined;
       state.confirmCount = 0;
       state.firstConfirmAt = 0;
-      state.lastConfirmedDexUpdatedAt =
-        undefined;
-
+      state.lastConfirmedDexUpdatedAt = undefined;
       return null;
     }
 
-    /**
-     * LONG запрещён, если MEXC
-     * падает быстрее порога.
-     *
-     * SHORT запрещён, если MEXC
-     * растёт быстрее порога.
-     */
-    const longBlocked =
-      status.dexDirectionalDriftPct <
-        -config.maxDexDriftPct ||
-      mexcDirectionalDriftPct <
-        -MEXC_TREND_BLOCK_PCT;
-
-    const shortBlocked =
-      status.dexDirectionalDriftPct >
-        config.maxDexDriftPct ||
-      mexcDirectionalDriftPct >
-        MEXC_TREND_BLOCK_PCT;
-
-    if (
-      longBlocked &&
-      shortBlocked
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          mexcDirectionalDriftPct,
-
-          dexDirectionalDriftPct:
-            status.dexDirectionalDriftPct,
-
-          longBlocked,
-          shortBlocked
-        },
-        "Both directions blocked by trend filters"
-      );
-
+    if (longBlockedFinal && shortBlockedFinal) {
+      logger.debug({ symbol: ticker.symbol, mexcDirectionalDriftPct, dexDirectionalDriftPct: status.dexDirectionalDriftPct, longBlocked: longBlockedFinal, shortBlocked: shortBlockedFinal }, "Both directions blocked by trend filters");
       return null;
     }
 
-    let direction:
-      | "LONG"
-      | "SHORT";
-
+    let direction: "LONG" | "SHORT";
     let spreadPct: number;
-
-    let entryRef:
-      | "ASK"
-      | "BID";
-
+    let entryRef: "ASK" | "BID";
     let reason: string;
 
-    if (
-      longValid &&
-      !longBlocked &&
-      (
-        !shortValid ||
-        shortBlocked ||
-        status.longSpreadPct >=
-          status.shortSpreadPct
-      )
-    ) {
+    if (longValid && !longBlockedFinal && (!shortValid || shortBlockedFinal || status.longSpreadPct >= status.shortSpreadPct)) {
       direction = "LONG";
-
-      spreadPct =
-        status.longSpreadPct;
-
+      spreadPct = status.longSpreadPct;
       entryRef = "ASK";
-
-      reason =
-        "MEXC below DEX anchor";
-    } else if (
-      shortValid &&
-      !shortBlocked
-    ) {
+      reason = "MEXC below DEX anchor";
+    } else if (shortValid && !shortBlockedFinal) {
       direction = "SHORT";
-
-      spreadPct =
-        status.shortSpreadPct;
-
+      spreadPct = status.shortSpreadPct;
       entryRef = "BID";
-
-      reason =
-        "MEXC above DEX anchor";
+      reason = "MEXC above DEX anchor";
     } else {
       return null;
     }
 
-    logger.debug(
-      {
-        symbol:
-          ticker.symbol,
+    logger.debug({ symbol: ticker.symbol, direction, mexcDirectionalDriftPct, dexDirectionalDriftPct: status.dexDirectionalDriftPct, longBlocked: longBlockedFinal, shortBlocked: shortBlockedFinal, spreadPct }, "MEXC trend filter");
 
-        direction,
+    const directionLastSignalAt = direction === "LONG" ? state.lastLongSignalAt : state.lastShortSignalAt;
+    if (nowMinus(directionLastSignalAt) < config.signalCooldownMs) return null;
 
-        mexcDirectionalDriftPct,
-
-        dexDirectionalDriftPct:
-          status.dexDirectionalDriftPct,
-
-        longBlocked,
-        shortBlocked,
-
-        spreadPct
-      },
-      "MEXC trend filter"
-    );
-
-    const directionLastSignalAt =
-      direction === "LONG"
-        ? state.lastLongSignalAt
-        : state.lastShortSignalAt;
-
-    if (
-      nowMinus(
-        directionLastSignalAt
-      ) <
-      config.signalCooldownMs
-    ) {
+    // Extra DEX drift checks (legacy)
+    if (direction === "LONG" && status.dexDirectionalDriftPct < -config.maxDexDriftPct) {
+      logger.debug({ symbol: ticker.symbol, directionalDriftPct: status.dexDirectionalDriftPct }, "LONG skipped: DEX anchor moving down");
+      return null;
+    }
+    if (direction === "SHORT" && status.dexDirectionalDriftPct > config.maxDexDriftPct) {
+      logger.debug({ symbol: ticker.symbol, directionalDriftPct: status.dexDirectionalDriftPct }, "SHORT skipped: DEX anchor moving up");
       return null;
     }
 
-    if (
-      direction === "LONG" &&
-      status.dexDirectionalDriftPct <
-        -config.maxDexDriftPct
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          directionalDriftPct:
-            status.dexDirectionalDriftPct
-        },
-        "LONG skipped: DEX anchor moving down"
-      );
-
+    if (state.lastConfirmedDexUpdatedAt === status.dexUpdatedAt) {
+      logger.debug({ symbol: ticker.symbol, dexUpdatedAt: status.dexUpdatedAt }, "Duplicate DEX snapshot");
       return null;
     }
 
-    if (
-      direction === "SHORT" &&
-      status.dexDirectionalDriftPct >
-        config.maxDexDriftPct
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+    state.lastConfirmedDexUpdatedAt = status.dexUpdatedAt;
 
-          directionalDriftPct:
-            status.dexDirectionalDriftPct
-        },
-        "SHORT skipped: DEX anchor moving up"
-      );
-
-      return null;
-    }
-
-    if (
-      state.lastConfirmedDexUpdatedAt ===
-      status.dexUpdatedAt
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          dexUpdatedAt:
-            status.dexUpdatedAt
-        },
-        "Duplicate DEX snapshot"
-      );
-
-      return null;
-    }
-
-    state.lastConfirmedDexUpdatedAt =
-      status.dexUpdatedAt;
-
-    const signalWindowMs =
-      Number(
-        config.signalWindowMs ??
-        5_000
-      );
-
+    const signalWindowMs = Number(config.signalWindowMs ?? 5_000);
     const now = Date.now();
 
-    if (
-      state.lastDirection !==
-      direction
-    ) {
-      state.lastDirection =
-        direction;
-
+    if (state.lastDirection !== direction) {
+      state.lastDirection = direction;
       state.confirmCount = 1;
       state.firstConfirmAt = now;
     } else {
-      const confirmationAge =
-        now - state.firstConfirmAt;
-
-      if (
-        confirmationAge >
-        signalWindowMs
-      ) {
+      const confirmationAge = now - state.firstConfirmAt;
+      if (confirmationAge > signalWindowMs) {
         state.confirmCount = 1;
         state.firstConfirmAt = now;
       } else {
@@ -947,441 +358,120 @@ export class SpreadEngine {
       }
     }
 
-    if (
-      state.confirmCount <
-      config.signalConfirmTicks
-    ) {
+    if (state.confirmCount < config.signalConfirmTicks) return null;
+    if (!Number.isFinite(spreadPct) || spreadPct <= 0) return null;
+
+    const totalCostsPct = config.roundTripCostPct;
+    const netEdgePct = spreadPct - totalCostsPct;
+    if (!Number.isFinite(netEdgePct) || netEdgePct < config.minNetEdgePct) {
+      logger.debug({ symbol: ticker.symbol, direction, spreadPct, totalCostsPct, netEdgePct, minNetEdge: config.minNetEdgePct }, "Net edge too low");
       return null;
     }
 
-    if (
-      !Number.isFinite(spreadPct) ||
-      spreadPct <= 0
-    ) {
-      return null;
-    }
+    state.lastSignalAt = now;
+    if (direction === "LONG") state.lastLongSignalAt = now;
+    else state.lastShortSignalAt = now;
 
-    const totalCostsPct =
-      config.roundTripCostPct;
-
-    const netEdgePct =
-      spreadPct -
-      totalCostsPct;
-
-    if (
-      !Number.isFinite(netEdgePct) ||
-      netEdgePct <
-        config.minNetEdgePct
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          direction,
-
-          spreadPct,
-
-          totalCostsPct,
-
-          netEdgePct,
-
-          minNetEdge:
-            config.minNetEdgePct
-        },
-        "Net edge too low"
-      );
-
-      return null;
-    }
-
-    state.lastSignalAt =
-      now;
-
-    if (
-      direction === "LONG"
-    ) {
-      state.lastLongSignalAt =
-        now;
-    } else {
-      state.lastShortSignalAt =
-        now;
-    }
-
-    logger.warn(
-      {
-        symbol:
-          ticker.symbol,
-
-        direction,
-
-        spreadPct:
-          spreadPct.toFixed(4),
-
-        netEdgePct:
-          netEdgePct.toFixed(4),
-
-        dexPrice:
-          status.dexPrice.toFixed(6),
-
-        mexcBid:
-          status.mexcBid.toFixed(6),
-
-        mexcAsk:
-          status.mexcAsk.toFixed(6),
-
-        mexcDirectionalDriftPct:
-          mexcDirectionalDriftPct.toFixed(4),
-
-        dexDirectionalDriftPct:
-          status.dexDirectionalDriftPct.toFixed(4),
-
-        confirmCount:
-          state.confirmCount,
-
-        reason
-      },
-      "SIGNAL GENERATED"
-    );
+    logger.warn({
+      symbol: ticker.symbol, direction, spreadPct: spreadPct.toFixed(4), netEdgePct: netEdgePct.toFixed(4),
+      dexPrice: status.dexPrice.toFixed(6), mexcBid: status.mexcBid.toFixed(6), mexcAsk: status.mexcAsk.toFixed(6),
+      mexcDirectionalDriftPct: mexcDirectionalDriftPct.toFixed(4), dexDirectionalDriftPct: status.dexDirectionalDriftPct.toFixed(4),
+      confirmCount: state.confirmCount, reason
+    }, "SIGNAL GENERATED");
 
     return {
-      id:
-        crypto.randomUUID(),
-
-      detectedAt:
-        new Date(now).toISOString(),
-
-      symbol:
-        ticker.symbol,
-
-      direction,
-
-      spreadPct:
-        round(spreadPct),
-
-      netEdgePct:
-        round(netEdgePct),
-
-      priceDeviationPct:
-        round(spreadPct),
-
-      currentPrice:
-        round(
-          status.mexcLast,
-          6
-        ),
-
-      referencePrice:
-        round(
-          status.dexPrice,
-          6
-        ),
-
-      movePct:
-        round(spreadPct),
-
-      dexPrice:
-        round(
-          status.dexPrice,
-          6
-        ),
-
-      mexcPrice:
-        round(
-          status.mexcLast,
-          6
-        ),
-
-      mexcBid:
-        round(
-          status.mexcBid,
-          6
-        ),
-
-      mexcAsk:
-        round(
-          status.mexcAsk,
-          6
-        ),
-
-      mexcTurnover24h:
-        round(
-          status.mexcTurnover24h,
-          4
-        ),
-
-      dexLiquidityUsd:
-        round(
-          status.dexLiquidityUsd,
-          2
-        ),
-
-      dexVolumeM5:
-        round(
-          status.dexVolumeM5,
-          2
-        ),
-
-      dexBuysM5:
-        status.dexBuysM5,
-
-      dexSellsM5:
-        status.dexSellsM5,
-
-      dexId:
-        status.dexId,
-
-      chainId:
-        status.chainId,
-
-      quoteSymbol:
-        status.quoteSymbol,
-
-      dexPairAddress:
-        status.dexPairAddress,
-
-      entryRef,
-
-      mexcBookSpreadPct:
-        round(
-          status.mexcBookSpreadPct
-        ),
-
-      anchorAgeMs:
-        status.anchorAgeMs,
-
-      dexUpdatedAt:
-        status.dexUpdatedAt,
-
-      dexDriftPct:
-        round(
-          status.dexDriftPct
-        ),
-
-      dexDirectionalDriftPct:
-        round(
-          status.dexDirectionalDriftPct
-        ),
-
-      confirmCount:
-        state.confirmCount,
-
-      reason
+      id: crypto.randomUUID(), detectedAt: new Date(now).toISOString(), symbol: ticker.symbol, direction,
+      spreadPct: round(spreadPct), netEdgePct: round(netEdgePct), priceDeviationPct: round(spreadPct),
+      currentPrice: round(status.mexcLast, 6), referencePrice: round(status.dexPrice, 6), movePct: round(spreadPct),
+      dexPrice: round(status.dexPrice, 6), mexcPrice: round(status.mexcLast, 6),
+      mexcBid: round(status.mexcBid, 6), mexcAsk: round(status.mexcAsk, 6),
+      mexcTurnover24h: round(status.mexcTurnover24h, 4),
+      dexLiquidityUsd: round(status.dexLiquidityUsd, 2), dexVolumeM5: round(status.dexVolumeM5, 2),
+      dexBuysM5: status.dexBuysM5, dexSellsM5: status.dexSellsM5,
+      dexId: status.dexId, chainId: status.chainId, quoteSymbol: status.quoteSymbol, dexPairAddress: status.dexPairAddress,
+      entryRef, mexcBookSpreadPct: round(status.mexcBookSpreadPct), anchorAgeMs: status.anchorAgeMs,
+      dexUpdatedAt: status.dexUpdatedAt, dexDriftPct: round(status.dexDriftPct), dexDirectionalDriftPct: round(status.dexDirectionalDriftPct),
+      confirmCount: state.confirmCount, reason
     };
   }
 
-  private recordMexcPrice(
-    state: SymbolState,
-    mexcMid: number,
-    tickerTimestamp: number,
-    fallbackNow: number
-  ): void {
-    const timestamp =
-      Number.isFinite(tickerTimestamp) &&
-      tickerTimestamp > 0
-        ? tickerTimestamp
-        : fallbackNow;
+  // ------------------------------ PRIVATE ------------------------------
 
-    if (
-      state.lastMexcHistoryTs ===
-      timestamp
-    ) {
-      return;
-    }
-
-    state.lastMexcHistoryTs =
-      timestamp;
-
-    state.mexcHistory.push({
-      price: mexcMid,
-      ts: timestamp
-    });
-
-    const cutoff =
-      fallbackNow -
-      MEXC_HISTORY_WINDOW_MS;
-
-    state.mexcHistory =
-      state.mexcHistory.filter(
-        (item) =>
-          item.ts >= cutoff
-      );
+  private recordMexcPrice(state: SymbolState, mexcMid: number, tickerTimestamp: number, fallbackNow: number): void {
+    const timestamp = Number.isFinite(tickerTimestamp) && tickerTimestamp > 0 ? tickerTimestamp : fallbackNow;
+    if (state.lastMexcHistoryTs === timestamp) return;
+    state.lastMexcHistoryTs = timestamp;
+    state.mexcHistory.push({ price: mexcMid, ts: timestamp });
+    const cutoff = fallbackNow - MEXC_HISTORY_WINDOW_MS;
+    state.mexcHistory = state.mexcHistory.filter((item) => item.ts >= cutoff);
   }
 
-  private calculateMexcTrend(
-    history: PriceHistoryPoint[]
-  ): number {
-    if (
-      history.length <
-      MIN_HISTORY_POINTS
-    ) {
-      return 0;
+  // ---- NEW: OLS slope (% per minute) ----
+  private calculateTrendSlope(history: PriceHistoryPoint[], windowMs: number): number {
+    const cutoff = Date.now() - windowMs;
+    const pts = history.filter((p) => p.ts >= cutoff && isPositiveFinite(p.price));
+    const minPoints = config.dexTrendMinPoints ?? 5;
+    if (pts.length < minPoints) return 0;
+
+    const n = pts.length;
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (const p of pts) {
+      sumX += p.ts;
+      sumY += p.price;
+      sumXY += p.ts * p.price;
+      sumXX += p.ts * p.ts;
     }
-
-    const first =
-      history[0]?.price;
-
-    const last =
-      history[history.length - 1]?.price;
-
-    if (
-      !isPositiveFinite(first) ||
-      !isPositiveFinite(last)
-    ) {
-      return 0;
-    }
-
-    return (
-      (last - first) /
-      first
-    ) * 100;
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    const avgPrice = sumY / n;
+    return (slope * 60_000 / avgPrice) * 100; // % per minute
   }
 
-  private isValidDexPair(
-    pair: DexPair
-  ): boolean {
-    return (
-      isPositiveFinite(
-        pair.priceUsd
-      ) &&
-      isNonNegativeFinite(
-        pair.liquidityUsd
-      ) &&
-      isNonNegativeFinite(
-        pair.volumeM5
-      ) &&
-      Number.isInteger(
-        pair.buysM5
-      ) &&
-      pair.buysM5 >= 0 &&
-      Number.isInteger(
-        pair.sellsM5
-      ) &&
-      pair.sellsM5 >= 0 &&
-      typeof pair.dexId ===
-        "string" &&
-      pair.dexId.length > 0 &&
-      typeof pair.chainId ===
-        "string" &&
-      pair.chainId.length > 0 &&
-      typeof pair.quoteSymbol ===
-        "string" &&
-      pair.quoteSymbol.length > 0 &&
-      typeof pair.pairAddress ===
-        "string" &&
-      pair.pairAddress.length > 0
-    );
+  private isValidDexPair(pair: DexPair): boolean {
+    return isPositiveFinite(pair.priceUsd) &&
+      isNonNegativeFinite(pair.liquidityUsd) &&
+      isNonNegativeFinite(pair.volumeM5) &&
+      Number.isInteger(pair.buysM5) && pair.buysM5 >= 0 &&
+      Number.isInteger(pair.sellsM5) && pair.sellsM5 >= 0 &&
+      typeof pair.dexId === "string" && pair.dexId.length > 0 &&
+      typeof pair.chainId === "string" && pair.chainId.length > 0 &&
+      typeof pair.quoteSymbol === "string" && pair.quoteSymbol.length > 0 &&
+      typeof pair.pairAddress === "string" && pair.pairAddress.length > 0;
   }
 
-  private getState(
-    symbol: string
-  ): SymbolState {
-    let state =
-      this.states.get(symbol);
-
+  private getState(symbol: string): SymbolState {
+    let state = this.states.get(symbol);
     if (!state) {
       state = {
-        dexHistory: [],
-        mexcHistory: [],
-
-        lastMexcHistoryTs:
-          undefined,
-
-        confirmCount: 0,
-        firstConfirmAt: 0,
-        cooldownUntil: 0,
-        lastSignalAt: 0,
-        lastLongSignalAt: 0,
-        lastShortSignalAt: 0,
-        lastConfirmedDexUpdatedAt:
-          undefined
+        dexHistory: [], mexcHistory: [], lastMexcHistoryTs: undefined,
+        confirmCount: 0, firstConfirmAt: 0, cooldownUntil: 0, lastSignalAt: 0,
+        lastLongSignalAt: 0, lastShortSignalAt: 0, lastConfirmedDexUpdatedAt: undefined
       };
-
-      this.states.set(
-        symbol,
-        state
-      );
+      this.states.set(symbol, state);
     }
-
     return state;
   }
 
-  private calculateDexDrift(
-    history: PriceHistoryPoint[]
-  ): {
-    rangePct: number;
-    directionalPct: number;
-  } {
-    const cutoff =
-      Date.now() -
-      DEX_HISTORY_WINDOW_MS;
+  private calculateDexDrift(history: PriceHistoryPoint[]): { rangePct: number; directionalPct: number } {
+    const cutoff = Date.now() - DEX_HISTORY_WINDOW_MS;
+    const recent = history.filter((item) => item.ts >= cutoff && isPositiveFinite(item.price)).slice(-DEX_DRIFT_POINTS);
+    if (recent.length < MIN_HISTORY_POINTS) return { rangePct: 0, directionalPct: 0 };
 
-    const recent =
-      history
-        .filter(
-          (item) =>
-            item.ts >= cutoff &&
-            isPositiveFinite(item.price)
-        )
-        .slice(
-          -DEX_DRIFT_POINTS
-        );
+    const prices = recent.map((item) => item.price);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const first = prices[0];
+    const last = prices[prices.length - 1];
+    const mid = (min + max) / 2;
 
-    if (
-      recent.length <
-      MIN_HISTORY_POINTS
-    ) {
-      return {
-        rangePct: 0,
-        directionalPct: 0
-      };
-    }
-
-    const prices =
-      recent.map(
-        (item) => item.price
-      );
-
-    const min =
-      Math.min(...prices);
-
-    const max =
-      Math.max(...prices);
-
-    const first =
-      prices[0];
-
-    const last =
-      prices[prices.length - 1];
-
-    const mid =
-      (min + max) / 2;
-
-    if (
-      !isPositiveFinite(mid) ||
-      !isPositiveFinite(first) ||
-      !isPositiveFinite(last)
-    ) {
-      return {
-        rangePct: 0,
-        directionalPct: 0
-      };
-    }
+    if (!isPositiveFinite(mid) || !isPositiveFinite(first) || !isPositiveFinite(last)) return { rangePct: 0, directionalPct: 0 };
 
     return {
-      rangePct:
-        ((max - min) / mid) *
-        100,
-
-      directionalPct:
-        ((last - first) / first) *
-        100
+      rangePct: ((max - min) / mid) * 100,
+      directionalPct: ((last - first) / first) * 100
     };
   }
 }
 
-function nowMinus(
-  timestamp: number
-): number {
+function nowMinus(timestamp: number): number {
   return Date.now() - timestamp;
 }
