@@ -1,3 +1,5 @@
+// src/services/paper-execution.ts
+
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
@@ -191,6 +193,52 @@ export class PaperExecutionService {
     return 0;
   }
 
+  private getTrailingTriggerPct(): number {
+    const extendedConfig =
+      config as typeof config & {
+        paperTrailingTriggerPct?: number;
+      };
+
+    const configuredTriggerPct =
+      Number(
+        extendedConfig.paperTrailingTriggerPct
+      );
+
+    if (
+      Number.isFinite(
+        configuredTriggerPct
+      ) &&
+      configuredTriggerPct > 0
+    ) {
+      return configuredTriggerPct;
+    }
+
+    return 0.5;
+  }
+
+  private getTrailingDistancePct(): number {
+    const extendedConfig =
+      config as typeof config & {
+        paperTrailingDistancePct?: number;
+      };
+
+    const configuredDistancePct =
+      Number(
+        extendedConfig.paperTrailingDistancePct
+      );
+
+    if (
+      Number.isFinite(
+        configuredDistancePct
+      ) &&
+      configuredDistancePct > 0
+    ) {
+      return configuredDistancePct;
+    }
+
+    return 0.3;
+  }
+
   private estimateExecutableDexPrice(
     anchor: AnchorStatus,
     qtyUsd: number,
@@ -235,7 +283,7 @@ export class PaperExecutionService {
   ): boolean {
     const stopPrice =
       trade.stopPrice;
-  
+
     if (
       !isFinitePositive(
         stopPrice
@@ -243,7 +291,7 @@ export class PaperExecutionService {
     ) {
       return false;
     }
-  
+
     if (
       trade.direction === "LONG"
     ) {
@@ -252,7 +300,7 @@ export class PaperExecutionService {
         stopPrice
       );
     }
-  
+
     return (
       exitAsk >=
       stopPrice
@@ -264,7 +312,7 @@ export class PaperExecutionService {
   ): number {
     const stopPrice =
       trade.stopPrice;
-  
+
     if (
       !isFinitePositive(
         stopPrice
@@ -274,10 +322,10 @@ export class PaperExecutionService {
         `Invalid stop price for trade ${trade.id}`
       );
     }
-  
+
     const slippagePct =
       this.getStopSlippagePct();
-  
+
     if (
       trade.direction === "LONG"
     ) {
@@ -286,7 +334,7 @@ export class PaperExecutionService {
         (1 - slippagePct / 100)
       );
     }
-  
+
     return (
       stopPrice *
       (1 + slippagePct / 100)
@@ -316,6 +364,140 @@ export class PaperExecutionService {
       ) /
       trade.entryPrice
     ) * 100;
+  }
+
+  private updateTrailingStop(
+    trade: PaperTrade,
+    exitBid: number,
+    exitAsk: number
+  ): void {
+    const triggerPct =
+      this.getTrailingTriggerPct();
+
+    const distancePct =
+      this.getTrailingDistancePct();
+
+    const currentPrice =
+      trade.direction === "LONG"
+        ? exitBid
+        : exitAsk;
+
+    if (
+      !isFinitePositive(
+        currentPrice
+      )
+    ) {
+      return;
+    }
+
+    const movePct =
+      trade.direction === "LONG"
+        ? (
+            (
+              currentPrice -
+              trade.entryPrice
+            ) /
+            trade.entryPrice
+          ) * 100
+        : (
+            (
+              trade.entryPrice -
+              currentPrice
+            ) /
+            trade.entryPrice
+          ) * 100;
+
+    if (
+      !trade.trailActive &&
+      movePct >= triggerPct
+    ) {
+      trade.trailActive = true;
+
+      trade.trailBestPrice =
+        currentPrice;
+
+      const newStopPrice =
+        trade.direction === "LONG"
+          ? currentPrice *
+            (1 - distancePct / 100)
+          : currentPrice *
+            (1 + distancePct / 100);
+
+      if (
+        trade.direction === "LONG"
+          ? newStopPrice >
+            trade.stopPrice
+          : newStopPrice <
+            trade.stopPrice
+      ) {
+        trade.stopPrice =
+          newStopPrice;
+      }
+
+      logger.debug(
+        {
+          tradeId: trade.id,
+          symbol: trade.symbol,
+          direction: trade.direction,
+          movePct,
+          triggerPct,
+          newStopPrice
+        },
+        "Trailing stop activated"
+      );
+
+      return;
+    }
+
+    if (
+      !trade.trailActive
+    ) {
+      return;
+    }
+
+    if (
+      trade.direction === "LONG"
+    ) {
+      if (
+        currentPrice >
+        (trade.trailBestPrice ?? 0)
+      ) {
+        trade.trailBestPrice =
+          currentPrice;
+
+        const newStopPrice =
+          currentPrice *
+          (1 - distancePct / 100);
+
+        if (
+          newStopPrice >
+          trade.stopPrice
+        ) {
+          trade.stopPrice =
+            newStopPrice;
+        }
+      }
+    } else {
+      if (
+        currentPrice <
+        (trade.trailBestPrice ?? Infinity)
+      ) {
+        trade.trailBestPrice =
+          currentPrice;
+
+        const newStopPrice =
+          currentPrice *
+          (1 + distancePct / 100);
+
+        if (
+          newStopPrice <
+          trade.stopPrice
+        ) {
+          trade.stopPrice =
+            newStopPrice;
+        }
+      }
+    }
   }
 
   onSignal(
@@ -661,6 +843,25 @@ export class PaperExecutionService {
           4
         ),
 
+      trailActive: false,
+
+      trailBestPrice:
+        round(
+          entryPrice
+        ),
+
+      trailTriggerPct:
+        round(
+          this.getTrailingTriggerPct(),
+          4
+        ),
+
+      trailDistancePct:
+        round(
+          this.getTrailingDistancePct(),
+          4
+        ),
+
       openReason:
         signal.reason
     };
@@ -722,7 +923,13 @@ export class PaperExecutionService {
           trade.stopPrice,
 
         stopDistancePct:
-          trade.stopDistancePct
+          trade.stopDistancePct,
+
+        trailTriggerPct:
+          trade.trailTriggerPct,
+
+        trailDistancePct:
+          trade.trailDistancePct
       },
       "PAPER TRADE OPENED"
     );
@@ -826,6 +1033,13 @@ export class PaperExecutionService {
       trade.direction === "LONG"
         ? exitBid
         : exitAsk;
+
+    // Обновляем трейлинг-стоп ПЕРЕД проверкой stopTriggered
+    this.updateTrailingStop(
+      trade,
+      exitBid,
+      exitAsk
+    );
 
     const stopTriggered =
       this.isStopTriggered(
@@ -1271,7 +1485,13 @@ export class PaperExecutionService {
 
         anchorIsFresh,
 
-        closeReason
+        closeReason,
+
+        trailActive:
+          closedTrade.trailActive,
+
+        trailBestPrice:
+          closedTrade.trailBestPrice
       },
       "PAPER TRADE CLOSED"
     );
