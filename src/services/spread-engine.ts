@@ -80,6 +80,12 @@ const MEXC_TREND_BLOCK_PCT = 0.3;
 
 const MIN_HISTORY_POINTS = 2;
 
+/**
+ * Верхняя граница спреда для генерации сигналов (4.5%).
+ * Все что выше — битый пул или чужой токен с тем же тикером.
+ */
+const MAX_ENTRY_SPREAD_PCT = 4.5;
+
 function normalizeSymbol(
   value: string
 ): string {
@@ -715,19 +721,24 @@ export class SpreadEngine {
     const dexTrendSlopePct =
       status.dexTrendSlopePct ?? 0;
 
+    // Входной спред должен быть в допустимом диапазоне [minSpreadPct .. MAX_ENTRY_SPREAD_PCT]
     const longValid =
       Number.isFinite(
         status.longSpreadPct
       ) &&
       status.longSpreadPct >=
-        config.minSpreadPct;
+        config.minSpreadPct &&
+      status.longSpreadPct <=
+        MAX_ENTRY_SPREAD_PCT;
 
     const shortValid =
       Number.isFinite(
         status.shortSpreadPct
       ) &&
       status.shortSpreadPct >=
-        config.minSpreadPct;
+        config.minSpreadPct &&
+      status.shortSpreadPct <=
+        MAX_ENTRY_SPREAD_PCT;
 
     if (
       !longValid &&
@@ -1267,13 +1278,6 @@ export class SpreadEngine {
 
   /**
    * OLS-наклон цены, % в минуту.
-   *
-   * В отличие от 2-точечного drift,
-   * использует ВСЕ точки окна —
-   * одиночный тик-скок не ломает оценку.
-   *
-   * slope = Cov(ts, price) / Var(ts),
-   * нормализовано на среднюю цену.
    */
   private calculateTrendSlope(
     history: PriceHistoryPoint[],
