@@ -1,5 +1,3 @@
-// src/services/paper-execution.ts
-
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
@@ -100,143 +98,30 @@ export class PaperExecutionService {
   }
 
   private getMaxTotalExposureUsd(): number {
-    const extendedConfig =
-      config as typeof config & {
-        paperMaxTotalExposurePct?: number;
-      };
-
-    const configuredExposurePct =
-      Number(
-        extendedConfig.paperMaxTotalExposurePct
-      );
-
-    const maxExposurePct =
-      Number.isFinite(
-        configuredExposurePct
-      ) &&
-      configuredExposurePct > 0
-        ? configuredExposurePct
-        : 0.9;
-
     return (
       this.depositUsd *
-      maxExposurePct
+      config.paperMaxTotalExposurePct
     );
   }
 
   private getStopDistancePct(): number {
-    const extendedConfig =
-      config as typeof config & {
-        paperStopLossPct?: number;
-      };
-
-    const configuredStopPct =
-      Number(
-        extendedConfig.paperStopLossPct
-      );
-
-    if (
-      Number.isFinite(
-        configuredStopPct
-      ) &&
-      configuredStopPct > 0
-    ) {
-      return configuredStopPct;
-    }
-
-    return 0.92;
+    return config.paperStopLossPct;
   }
 
   private getStopSlippagePct(): number {
-    const extendedConfig =
-      config as typeof config & {
-        paperStopSlippagePct?: number;
-      };
-
-    const configuredSlippagePct =
-      Number(
-        extendedConfig.paperStopSlippagePct
-      );
-
-    if (
-      Number.isFinite(
-        configuredSlippagePct
-      ) &&
-      configuredSlippagePct >= 0
-    ) {
-      return configuredSlippagePct;
-    }
-
-    return 0;
+    return config.paperStopSlippagePct;
   }
 
   private getMinHoldMs(): number {
-    const extendedConfig =
-      config as typeof config & {
-        paperMinHoldMs?: number;
-      };
-
-    const configuredMinHoldMs =
-      Number(
-        extendedConfig.paperMinHoldMs
-      );
-
-    if (
-      Number.isFinite(
-        configuredMinHoldMs
-      ) &&
-      configuredMinHoldMs > 0
-    ) {
-      return configuredMinHoldMs;
-    }
-
-    return 0;
+    return config.paperMinHoldMs;
   }
 
   private getTrailingTriggerPct(): number {
-    const extendedConfig =
-      config as typeof config & {
-        paperTrailingTriggerPct?: number;
-      };
-
-    const configuredTriggerPct =
-      Number(
-        extendedConfig.paperTrailingTriggerPct
-      );
-
-    if (
-      Number.isFinite(
-        configuredTriggerPct
-      ) &&
-      configuredTriggerPct > 0
-    ) {
-      return configuredTriggerPct;
-    }
-
-    return 0.5;
+    return config.paperTrailingTriggerPct;
   }
 
   private getTrailingDistancePct(): number {
-    const extendedConfig =
-      config as typeof config & {
-        paperTrailingDistancePct?: number;
-      };
-
-    const configuredDistancePct =
-      Number(
-        extendedConfig.paperTrailingDistancePct
-      );
-
-    if (
-      Number.isFinite(
-        configuredDistancePct
-      ) &&
-      configuredDistancePct > 0
-    ) {
-      return configuredDistancePct;
-    }
-
-    return 0.3;
+    return config.paperTrailingDistancePct;
   }
 
   private estimateExecutableDexPrice(
@@ -366,6 +251,20 @@ export class PaperExecutionService {
     ) * 100;
   }
 
+  /**
+   * Трейлинг-стоп.
+   *
+   * 1. Пока цена не ушла в нашу пользу
+   *    на trailTriggerPct — работает
+   *    обычный stopPrice.
+   * 2. После активации запоминаем лучшую
+   *    цену и подтягиваем stopPrice на
+   *    trailDistancePct от неё.
+   * 3. Стоп двигается ТОЛЬКО в сторону
+   *    прибыли, никогда назад.
+   * 4. triggerPct = 0 в конфиге —
+   *    трейлинг выключен.
+   */
   private updateTrailingStop(
     trade: PaperTrade,
     exitBid: number,
@@ -377,15 +276,20 @@ export class PaperExecutionService {
     const distancePct =
       this.getTrailingDistancePct();
 
+    if (
+      triggerPct <= 0 ||
+      distancePct <= 0
+    ) {
+      return;
+    }
+
     const currentPrice =
       trade.direction === "LONG"
         ? exitBid
         : exitAsk;
 
     if (
-      !isFinitePositive(
-        currentPrice
-      )
+      !isFinitePositive(currentPrice)
     ) {
       return;
     }
@@ -407,12 +311,21 @@ export class PaperExecutionService {
             trade.entryPrice
           ) * 100;
 
-    if (
-      !trade.trailActive &&
-      movePct >= triggerPct
-    ) {
-      trade.trailActive = true;
+    // Локальные копии: TS не сужает
+    // optional-поля объекта после мутаций
+    const bestPrice =
+      trade.trailBestPrice ??
+      currentPrice;
 
+    const stopPrice =
+      trade.stopPrice;
+
+    if (!trade.trailActive) {
+      if (movePct < triggerPct) {
+        return;
+      }
+
+      trade.trailActive = true;
       trade.trailBestPrice =
         currentPrice;
 
@@ -424,14 +337,15 @@ export class PaperExecutionService {
             (1 + distancePct / 100);
 
       if (
-        trade.direction === "LONG"
-          ? newStopPrice >
-            trade.stopPrice
-          : newStopPrice <
-            trade.stopPrice
+        !isFinitePositive(stopPrice) ||
+        (
+          trade.direction === "LONG"
+            ? newStopPrice > stopPrice
+            : newStopPrice < stopPrice
+        )
       ) {
         trade.stopPrice =
-          newStopPrice;
+          round(newStopPrice);
       }
 
       logger.debug(
@@ -439,9 +353,11 @@ export class PaperExecutionService {
           tradeId: trade.id,
           symbol: trade.symbol,
           direction: trade.direction,
-          movePct,
+          movePct: round(movePct, 4),
           triggerPct,
-          newStopPrice
+          distancePct,
+          newStopPrice:
+            trade.stopPrice
         },
         "Trailing stop activated"
       );
@@ -450,18 +366,9 @@ export class PaperExecutionService {
     }
 
     if (
-      !trade.trailActive
-    ) {
-      return;
-    }
-
-    if (
       trade.direction === "LONG"
     ) {
-      if (
-        currentPrice >
-        (trade.trailBestPrice ?? 0)
-      ) {
+      if (currentPrice > bestPrice) {
         trade.trailBestPrice =
           currentPrice;
 
@@ -470,18 +377,15 @@ export class PaperExecutionService {
           (1 - distancePct / 100);
 
         if (
-          newStopPrice >
-          trade.stopPrice
+          !isFinitePositive(stopPrice) ||
+          newStopPrice > stopPrice
         ) {
           trade.stopPrice =
-            newStopPrice;
+            round(newStopPrice);
         }
       }
     } else {
-      if (
-        currentPrice <
-        (trade.trailBestPrice ?? Infinity)
-      ) {
+      if (currentPrice < bestPrice) {
         trade.trailBestPrice =
           currentPrice;
 
@@ -490,11 +394,11 @@ export class PaperExecutionService {
           (1 + distancePct / 100);
 
         if (
-          newStopPrice <
-          trade.stopPrice
+          !isFinitePositive(stopPrice) ||
+          newStopPrice < stopPrice
         ) {
           trade.stopPrice =
-            newStopPrice;
+            round(newStopPrice);
         }
       }
     }
@@ -711,6 +615,9 @@ export class PaperExecutionService {
       dexDirectionalDriftPct:
         signal.dexDirectionalDriftPct,
 
+      dexTrendSlopePct:
+        signal.dexTrendSlopePct ?? 0,
+
       mexcBid,
 
       mexcAsk,
@@ -846,21 +753,13 @@ export class PaperExecutionService {
       trailActive: false,
 
       trailBestPrice:
-        round(
-          entryPrice
-        ),
+        round(entryPrice),
 
       trailTriggerPct:
-        round(
-          this.getTrailingTriggerPct(),
-          4
-        ),
+        this.getTrailingTriggerPct(),
 
       trailDistancePct:
-        round(
-          this.getTrailingDistancePct(),
-          4
-        ),
+        this.getTrailingDistancePct(),
 
       openReason:
         signal.reason
@@ -1034,7 +933,8 @@ export class PaperExecutionService {
         ? exitBid
         : exitAsk;
 
-    // Обновляем трейлинг-стоп ПЕРЕД проверкой stopTriggered
+    // Трейлинг обновляет stopPrice
+    // ДО проверки срабатывания
     this.updateTrailingStop(
       trade,
       exitBid,
@@ -1198,7 +1098,9 @@ export class PaperExecutionService {
 
     if (stopTriggered) {
       closeReason =
-        "stop_loss";
+        trade.trailActive
+          ? "trailing_stop"
+          : "stop_loss";
 
       stopTriggerPrice =
         trade.direction === "LONG"
@@ -1402,8 +1304,8 @@ export class PaperExecutionService {
         ),
 
       stopSlippagePct:
-        closeReason ===
-          "stop_loss"
+        closeReason === "stop_loss" ||
+        closeReason === "trailing_stop"
           ? this.getStopSlippagePct()
           : undefined
     };
