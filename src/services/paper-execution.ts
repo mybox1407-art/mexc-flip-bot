@@ -25,14 +25,25 @@ type PaperAction =
 
 /**
  * Максимально допустимый входной спред.
- * Все что выше — битый маппинг или чужой токен (как HYPE с 9.7%).
+ * Все что выше — битый маппинг или чужой токен.
  */
 const MAX_ENTRY_SPREAD_PCT = 4.5;
 
 /**
- * Кулдаун на инструмент после срабатывания stop_loss (15 минут).
+ * Минимальная net-прибыль после round-trip издержек
+ * для закрытия по возврату спреда.
+ *
+ * Важно:
+ * это процент от цены инструмента,
+ * а не процент от размера депозита.
  */
-const SYMBOL_STOP_COOLDOWN_MS = 15 * 60 * 1000;
+const MIN_NET_PROFIT_PCT = 0.05;
+
+/**
+ * Кулдаун на инструмент после срабатывания stop_loss.
+ */
+const SYMBOL_STOP_COOLDOWN_MS =
+  15 * 60 * 1000;
 
 /**
  * Лимит стопов подряд до временного бана инструмента.
@@ -40,9 +51,10 @@ const SYMBOL_STOP_COOLDOWN_MS = 15 * 60 * 1000;
 const MAX_CONSECUTIVE_STOPS = 2;
 
 /**
- * Длительность бана инструмента при серии стопов (2 часа).
+ * Длительность бана инструмента при серии стопов.
  */
-const SYMBOL_BAN_DURATION_MS = 2 * 60 * 60 * 1000;
+const SYMBOL_BAN_DURATION_MS =
+  2 * 60 * 60 * 1000;
 
 interface SymbolRiskState {
   consecutiveStops: number;
@@ -161,15 +173,24 @@ export class PaperExecutionService {
   private getSymbolRiskState(
     positionKey: string
   ): SymbolRiskState {
-    let state = this.symbolRisk.get(positionKey);
+    let state =
+      this.symbolRisk.get(
+        positionKey
+      );
+
     if (!state) {
       state = {
         consecutiveStops: 0,
         cooldownUntil: 0,
         bannedUntil: 0
       };
-      this.symbolRisk.set(positionKey, state);
+
+      this.symbolRisk.set(
+        positionKey,
+        state
+      );
     }
+
     return state;
   }
 
@@ -301,7 +322,7 @@ export class PaperExecutionService {
   }
 
   /**
-   * Трейлинг-стоп.
+   * Обновление трейлинг-стопа.
    */
   private updateTrailingStop(
     trade: PaperTrade,
@@ -327,7 +348,9 @@ export class PaperExecutionService {
         : exitAsk;
 
     if (
-      !isFinitePositive(currentPrice)
+      !isFinitePositive(
+        currentPrice
+      )
     ) {
       return;
     }
@@ -356,12 +379,18 @@ export class PaperExecutionService {
     const stopPrice =
       trade.stopPrice;
 
-    if (!trade.trailActive) {
-      if (movePct < triggerPct) {
+    if (
+      !trade.trailActive
+    ) {
+      if (
+        movePct <
+        triggerPct
+      ) {
         return;
       }
 
       trade.trailActive = true;
+
       trade.trailBestPrice =
         currentPrice;
 
@@ -373,15 +402,21 @@ export class PaperExecutionService {
             (1 + distancePct / 100);
 
       if (
-        !isFinitePositive(stopPrice) ||
+        !isFinitePositive(
+          stopPrice
+        ) ||
         (
           trade.direction === "LONG"
-            ? newStopPrice > stopPrice
-            : newStopPrice < stopPrice
+            ? newStopPrice >
+              stopPrice
+            : newStopPrice <
+              stopPrice
         )
       ) {
         trade.stopPrice =
-          round(newStopPrice);
+          round(
+            newStopPrice
+          );
       }
 
       logger.debug(
@@ -389,7 +424,10 @@ export class PaperExecutionService {
           tradeId: trade.id,
           symbol: trade.symbol,
           direction: trade.direction,
-          movePct: round(movePct, 4),
+          movePct: round(
+            movePct,
+            4
+          ),
           triggerPct,
           distancePct,
           newStopPrice:
@@ -404,7 +442,10 @@ export class PaperExecutionService {
     if (
       trade.direction === "LONG"
     ) {
-      if (currentPrice > bestPrice) {
+      if (
+        currentPrice >
+        bestPrice
+      ) {
         trade.trailBestPrice =
           currentPrice;
 
@@ -413,29 +454,44 @@ export class PaperExecutionService {
           (1 - distancePct / 100);
 
         if (
-          !isFinitePositive(stopPrice) ||
-          newStopPrice > stopPrice
+          !isFinitePositive(
+            stopPrice
+          ) ||
+          newStopPrice >
+            stopPrice
         ) {
           trade.stopPrice =
-            round(newStopPrice);
+            round(
+              newStopPrice
+            );
         }
       }
-    } else {
-      if (currentPrice < bestPrice) {
-        trade.trailBestPrice =
-          currentPrice;
 
-        const newStopPrice =
-          currentPrice *
-          (1 + distancePct / 100);
+      return;
+    }
 
-        if (
-          !isFinitePositive(stopPrice) ||
-          newStopPrice < stopPrice
-        ) {
-          trade.stopPrice =
-            round(newStopPrice);
-        }
+    if (
+      currentPrice <
+      bestPrice
+    ) {
+      trade.trailBestPrice =
+        currentPrice;
+
+      const newStopPrice =
+        currentPrice *
+        (1 + distancePct / 100);
+
+      if (
+        !isFinitePositive(
+          stopPrice
+        ) ||
+        newStopPrice <
+          stopPrice
+      ) {
+        trade.stopPrice =
+          round(
+            newStopPrice
+          );
       }
     }
   }
@@ -448,47 +504,95 @@ export class PaperExecutionService {
         signal.symbol
       );
 
-    const now = Date.now();
-    const riskState = this.getSymbolRiskState(positionKey);
+    const now =
+      Date.now();
 
-    // 1. Проверка бана инструмента при серии стопов
-    if (now < riskState.bannedUntil) {
-      const remainingMin = Math.ceil((riskState.bannedUntil - now) / 60000);
+    const riskState =
+      this.getSymbolRiskState(
+        positionKey
+      );
+
+    if (
+      now <
+      riskState.bannedUntil
+    ) {
+      const remainingMin =
+        Math.ceil(
+          (
+            riskState.bannedUntil -
+            now
+          ) / 60000
+        );
+
       logger.debug(
         {
-          symbol: signal.symbol,
-          bannedUntil: new Date(riskState.bannedUntil).toISOString(),
+          symbol:
+            signal.symbol,
+
+          bannedUntil:
+            new Date(
+              riskState.bannedUntil
+            ).toISOString(),
+
           remainingMin
         },
         "Signal skipped: symbol is temporarily banned due to consecutive stop losses"
       );
+
       return null;
     }
 
-    // 2. Проверка кулдауна после единичного стопа
-    if (now < riskState.cooldownUntil) {
-      const remainingSec = Math.ceil((riskState.cooldownUntil - now) / 1000);
+    if (
+      now <
+      riskState.cooldownUntil
+    ) {
+      const remainingSec =
+        Math.ceil(
+          (
+            riskState.cooldownUntil -
+            now
+          ) / 1000
+        );
+
       logger.debug(
         {
-          symbol: signal.symbol,
-          cooldownUntil: new Date(riskState.cooldownUntil).toISOString(),
+          symbol:
+            signal.symbol,
+
+          cooldownUntil:
+            new Date(
+              riskState.cooldownUntil
+            ).toISOString(),
+
           remainingSec
         },
         "Signal skipped: symbol is in post-stop cooldown"
       );
+
       return null;
     }
 
-    // 3. Проверка верхнего потолка спреда (защита от токсичных пулов)
-    if (signal.spreadPct > MAX_ENTRY_SPREAD_PCT) {
+    if (
+      signal.spreadPct >
+      MAX_ENTRY_SPREAD_PCT
+    ) {
       logger.warn(
         {
-          symbol: signal.symbol,
-          spreadPct: round(signal.spreadPct, 3),
-          maxEntrySpreadPct: MAX_ENTRY_SPREAD_PCT
+          symbol:
+            signal.symbol,
+
+          spreadPct:
+            round(
+              signal.spreadPct,
+              3
+            ),
+
+          maxEntrySpreadPct:
+            MAX_ENTRY_SPREAD_PCT
         },
-        "Signal skipped: entry spread exceeds safety threshold (potential bad DEX pool mapping)"
+        "Signal skipped: entry spread exceeds safety threshold"
       );
+
       return null;
     }
 
@@ -499,8 +603,11 @@ export class PaperExecutionService {
     ) {
       logger.debug(
         {
-          symbol: signal.symbol,
-          direction: signal.direction
+          symbol:
+            signal.symbol,
+
+          direction:
+            signal.direction
         },
         "Signal skipped: position already open"
       );
@@ -514,9 +621,12 @@ export class PaperExecutionService {
     ) {
       logger.debug(
         {
-          symbol: signal.symbol,
+          symbol:
+            signal.symbol,
+
           openTrades:
             this.openTrades.size,
+
           maxOpenTrades:
             this.maxOpenTrades
         },
@@ -533,8 +643,11 @@ export class PaperExecutionService {
     ) {
       logger.warn(
         {
-          symbol: signal.symbol,
-          depositUsd: this.depositUsd
+          symbol:
+            signal.symbol,
+
+          depositUsd:
+            this.depositUsd
         },
         "Signal skipped: invalid deposit"
       );
@@ -543,10 +656,14 @@ export class PaperExecutionService {
     }
 
     const mexcBid =
-      Number(signal.mexcBid);
+      Number(
+        signal.mexcBid
+      );
 
     const mexcAsk =
-      Number(signal.mexcAsk);
+      Number(
+        signal.mexcAsk
+      );
 
     if (
       !isFinitePositive(
@@ -559,10 +676,15 @@ export class PaperExecutionService {
     ) {
       logger.warn(
         {
-          symbol: signal.symbol,
-          direction: signal.direction,
+          symbol:
+            signal.symbol,
+
+          direction:
+            signal.direction,
+
           mexcBid,
           mexcAsk,
+
           mexcBookSpreadPct:
             signal.mexcBookSpreadPct
         },
@@ -584,8 +706,12 @@ export class PaperExecutionService {
     ) {
       logger.warn(
         {
-          symbol: signal.symbol,
-          direction: signal.direction,
+          symbol:
+            signal.symbol,
+
+          direction:
+            signal.direction,
+
           entryPrice
         },
         "Invalid paper entry price"
@@ -614,9 +740,13 @@ export class PaperExecutionService {
     ) {
       logger.debug(
         {
-          symbol: signal.symbol,
+          symbol:
+            signal.symbol,
+
           qtyUsd,
+
           usedCapitalUsd,
+
           maxExposureUsd
         },
         "Signal skipped: maximum total exposure reached"
@@ -639,11 +769,16 @@ export class PaperExecutionService {
     ) {
       logger.warn(
         {
-          symbol: signal.symbol,
+          symbol:
+            signal.symbol,
+
           depositAtEntry,
+
           allocationPct:
             this.tradeAllocationPct,
+
           qtyUsd,
+
           qtyToken
         },
         "Invalid paper position size"
@@ -696,7 +831,8 @@ export class PaperExecutionService {
         signal.dexDirectionalDriftPct,
 
       dexTrendSlopePct:
-        signal.dexTrendSlopePct ?? 0,
+        signal.dexTrendSlopePct ??
+        0,
 
       mexcBid,
 
@@ -732,8 +868,12 @@ export class PaperExecutionService {
     ) {
       logger.warn(
         {
-          symbol: signal.symbol,
-          direction: signal.direction,
+          symbol:
+            signal.symbol,
+
+          direction:
+            signal.direction,
+
           executableDexPrice
         },
         "Invalid executable DEX price"
@@ -768,7 +908,9 @@ export class PaperExecutionService {
         new Date().toISOString(),
 
       entryPrice:
-        round(entryPrice),
+        round(
+          entryPrice
+        ),
 
       entryRef:
         signal.direction === "LONG"
@@ -830,10 +972,13 @@ export class PaperExecutionService {
           4
         ),
 
-      trailActive: false,
+      trailActive:
+        false,
 
       trailBestPrice:
-        round(entryPrice),
+        round(
+          entryPrice
+        ),
 
       trailTriggerPct:
         this.getTrailingTriggerPct(),
@@ -908,7 +1053,10 @@ export class PaperExecutionService {
           trade.trailTriggerPct,
 
         trailDistancePct:
-          trade.trailDistancePct
+          trade.trailDistancePct,
+
+        minNetProfitPct:
+          MIN_NET_PROFIT_PCT
       },
       "PAPER TRADE OPENED"
     );
@@ -935,7 +1083,9 @@ export class PaperExecutionService {
         positionKey
       );
 
-    if (!trade) {
+    if (
+      !trade
+    ) {
       return null;
     }
 
@@ -962,10 +1112,14 @@ export class PaperExecutionService {
       );
 
     const exitBid =
-      Number(ticker.bid1);
+      Number(
+        ticker.bid1
+      );
 
     const exitAsk =
-      Number(ticker.ask1);
+      Number(
+        ticker.ask1
+      );
 
     if (
       !isFinitePositive(
@@ -978,8 +1132,12 @@ export class PaperExecutionService {
     ) {
       logger.warn(
         {
-          symbol: ticker.symbol,
-          tradeId: trade.id,
+          symbol:
+            ticker.symbol,
+
+          tradeId:
+            trade.id,
+
           exitBid,
           exitAsk
         },
@@ -1013,8 +1171,6 @@ export class PaperExecutionService {
         ? exitBid
         : exitAsk;
 
-    // Трейлинг обновляет stopPrice
-    // ДО проверки срабатывания
     this.updateTrailingStop(
       trade,
       exitBid,
@@ -1063,27 +1219,21 @@ export class PaperExecutionService {
         currentDexPrice =
           freshDexPrice;
 
-        const currentMexcBid =
-          exitBid;
-
-        const currentMexcAsk =
-          exitAsk;
-
         currentSpreadPct =
           trade.direction === "LONG"
             ? (
                 (
                   freshDexPrice -
-                  currentMexcAsk
+                  exitAsk
                 ) /
-                currentMexcAsk
+                exitAsk
               ) * 100
             : (
                 (
-                  currentMexcBid -
+                  exitBid -
                   freshDexPrice
                 ) /
-                currentMexcBid
+                exitBid
               ) * 100;
       }
 
@@ -1136,7 +1286,9 @@ export class PaperExecutionService {
           );
         }
       }
-    } else if (anchor) {
+    } else if (
+      anchor
+    ) {
       logger.debug(
         {
           symbol:
@@ -1176,7 +1328,9 @@ export class PaperExecutionService {
       | number
       | undefined;
 
-    if (stopTriggered) {
+    if (
+      stopTriggered
+    ) {
       closeReason =
         trade.trailActive
           ? "trailing_stop"
@@ -1195,8 +1349,60 @@ export class PaperExecutionService {
       minHoldReached &&
       spreadExitReached
     ) {
-      closeReason =
-        "mean_reverted_profit";
+      /**
+       * Сначала считаем результат по реальной
+       * исполнимой рыночной цене.
+       */
+      const grossPnlPctAtMarket =
+        this.calculateGrossPnlPct(
+          trade,
+          marketExitPrice
+        );
+
+      const netPnlPctAtMarket =
+        grossPnlPctAtMarket -
+        this.getTotalCostsPct();
+
+      /**
+       * Закрытие по возврату спреда допускается
+       * только после покрытия издержек и достижения
+       * минимальной net-прибыли.
+       */
+      if (
+        netPnlPctAtMarket >=
+        MIN_NET_PROFIT_PCT
+      ) {
+        closeReason =
+          "mean_reverted_profit";
+
+        logger.debug(
+          {
+            tradeId:
+              trade.id,
+
+            symbol:
+              trade.symbol,
+
+            currentSpreadPct,
+
+            grossPnlPct:
+              round(
+                grossPnlPctAtMarket,
+                4
+              ),
+
+            netPnlPct:
+              round(
+                netPnlPctAtMarket,
+                4
+              ),
+
+            minNetProfitPct:
+              MIN_NET_PROFIT_PCT
+          },
+          "Minimum net profit reached"
+        );
+      }
     } else if (
       minHoldReached &&
       holdMs >=
@@ -1206,7 +1412,24 @@ export class PaperExecutionService {
         "timeout";
     }
 
-    if (!closeReason) {
+    /**
+     * Если спред уже вернулся, но прибыль меньше
+     * минимального порога, timeout должен всё равно
+     * сработать на этом же тике.
+     */
+    if (
+      !closeReason &&
+      minHoldReached &&
+      holdMs >=
+        config.paperMaxHoldMs
+    ) {
+      closeReason =
+        "timeout";
+    }
+
+    if (
+      !closeReason
+    ) {
       return null;
     }
 
@@ -1277,38 +1500,65 @@ export class PaperExecutionService {
       return null;
     }
 
-    // --- ОБНОВЛЕНИЕ РИСК-СОСТОЯНИЯ СИМВОЛА ПОСЛЕ ЗАКРЫТИЯ ---
-    const riskState = this.getSymbolRiskState(positionKey);
+    const riskState =
+      this.getSymbolRiskState(
+        positionKey
+      );
 
-    if (closeReason === "stop_loss") {
+    if (
+      closeReason ===
+      "stop_loss"
+    ) {
       riskState.consecutiveStops += 1;
-      riskState.cooldownUntil = now + SYMBOL_STOP_COOLDOWN_MS;
+
+      riskState.cooldownUntil =
+        now +
+        SYMBOL_STOP_COOLDOWN_MS;
 
       logger.warn(
         {
-          symbol: trade.symbol,
-          consecutiveStops: riskState.consecutiveStops,
-          cooldownMin: SYMBOL_STOP_COOLDOWN_MS / 60000
+          symbol:
+            trade.symbol,
+
+          consecutiveStops:
+            riskState.consecutiveStops,
+
+          cooldownMin:
+            SYMBOL_STOP_COOLDOWN_MS /
+            60000
         },
         "Stop loss triggered: per-symbol cooldown activated"
       );
 
-      if (riskState.consecutiveStops >= MAX_CONSECUTIVE_STOPS) {
-        riskState.bannedUntil = now + SYMBOL_BAN_DURATION_MS;
+      if (
+        riskState.consecutiveStops >=
+        MAX_CONSECUTIVE_STOPS
+      ) {
+        riskState.bannedUntil =
+          now +
+          SYMBOL_BAN_DURATION_MS;
+
         logger.error(
           {
-            symbol: trade.symbol,
-            consecutiveStops: riskState.consecutiveStops,
-            bannedHours: SYMBOL_BAN_DURATION_MS / 3600000
+            symbol:
+              trade.symbol,
+
+            consecutiveStops:
+              riskState.consecutiveStops,
+
+            bannedHours:
+              SYMBOL_BAN_DURATION_MS /
+              3600000
           },
           "Consecutive stop loss limit reached: symbol temporarily banned"
         );
       }
     } else if (
-      closeReason === "mean_reverted_profit" ||
-      closeReason === "trailing_stop"
+      closeReason ===
+        "mean_reverted_profit" ||
+      closeReason ===
+        "trailing_stop"
     ) {
-      // Сбрасываем счетчик при успешной сделке
       riskState.consecutiveStops = 0;
     }
 
@@ -1357,7 +1607,8 @@ export class PaperExecutionService {
 
       dexAnchorAtExit:
         anchorIsFresh &&
-        currentDexPrice !== undefined
+        currentDexPrice !==
+          undefined
           ? currentDexPrice
           : trade.dexAnchorAtEntry,
 
@@ -1419,8 +1670,10 @@ export class PaperExecutionService {
         ),
 
       stopSlippagePct:
-        closeReason === "stop_loss" ||
-        closeReason === "trailing_stop"
+        closeReason ===
+          "stop_loss" ||
+        closeReason ===
+          "trailing_stop"
           ? this.getStopSlippagePct()
           : undefined
     };
@@ -1503,6 +1756,9 @@ export class PaperExecutionService {
         anchorIsFresh,
 
         closeReason,
+
+        minNetProfitPct:
+          MIN_NET_PROFIT_PCT,
 
         trailActive:
           closedTrade.trailActive,
