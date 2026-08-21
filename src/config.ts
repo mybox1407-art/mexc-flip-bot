@@ -310,7 +310,7 @@ export const config = {
 
   paperStopLossPct: numberEnv(
     "PAPER_STOP_LOSS_PCT",
-    0.92
+    1.8
   ),
 
   paperMaxHoldMs: numberEnv(
@@ -345,12 +345,12 @@ export const config = {
   paperStopSlippagePct:
     numberEnv(
       "PAPER_STOP_SLIPPAGE_PCT",
-      0
+      0.1
     ),
 
   paperMinHoldMs:
     numberEnv(
       "PAPER_MIN_HOLD_MS",
-      3_000
+      30_000
     )
 } as const;
