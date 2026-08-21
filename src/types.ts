@@ -39,6 +39,7 @@ export type CloseReason =
   | "mean_reverted_profit"
   | "mean_reverted_loss"
   | "stop_loss"
+  | "trailing_stop"
   | "timeout"
   | "anchor_moved_against_position"
   | "anchor_stale"
@@ -80,6 +81,10 @@ export interface FlipSignal {
   dexUpdatedAt: number;
   dexDriftPct: number;
   dexDirectionalDriftPct: number;
+
+  // NEW: OLS-наклон DEX цены, % в минуту
+  dexTrendSlopePct?: number;
+
   confirmCount: number;
   reason: string;
 }
@@ -132,6 +137,12 @@ export interface PaperTrade {
   stopTriggerPrice?: number;
   marketExitPrice?: number;
   stopSlippagePct?: number;
+
+  // NEW: trailing stop state
+  trailActive?: boolean;
+  trailBestPrice?: number;
+  trailTriggerPct?: number;
+  trailDistancePct?: number;
 
   grossPnlPct?: number;
   netPnlPct?: number;
