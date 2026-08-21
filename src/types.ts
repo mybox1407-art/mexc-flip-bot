@@ -127,6 +127,12 @@ export interface PaperTrade {
   entrySpreadPct: number;
   exitSpreadPct?: number;
 
+  stopPrice?: number;
+  stopDistancePct?: number;
+  stopTriggerPrice?: number;
+  marketExitPrice?: number;
+  stopSlippagePct?: number;
+
   grossPnlPct?: number;
   netPnlPct?: number;
 
