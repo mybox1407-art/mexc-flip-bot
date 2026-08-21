@@ -23,6 +23,33 @@ type PaperAction =
       trade: PaperTrade;
     };
 
+/**
+ * Максимально допустимый входной спред.
+ * Все что выше — битый маппинг или чужой токен (как HYPE с 9.7%).
+ */
+const MAX_ENTRY_SPREAD_PCT = 4.5;
+
+/**
+ * Кулдаун на инструмент после срабатывания stop_loss (15 минут).
+ */
+const SYMBOL_STOP_COOLDOWN_MS = 15 * 60 * 1000;
+
+/**
+ * Лимит стопов подряд до временного бана инструмента.
+ */
+const MAX_CONSECUTIVE_STOPS = 2;
+
+/**
+ * Длительность бана инструмента при серии стопов (2 часа).
+ */
+const SYMBOL_BAN_DURATION_MS = 2 * 60 * 60 * 1000;
+
+interface SymbolRiskState {
+  consecutiveStops: number;
+  cooldownUntil: number;
+  bannedUntil: number;
+}
+
 function normalizeSymbol(
   value: string
 ): string {
@@ -63,6 +90,13 @@ export class PaperExecutionService {
 
   private readonly liquidityAtEntry =
     new Map<string, number>();
+
+  /**
+   * Состояние риска по каждому символу:
+   * отслеживание кулдаунов и серий стопов.
+   */
+  private readonly symbolRisk =
+    new Map<string, SymbolRiskState>();
 
   private readonly maxOpenTrades = 3;
 
@@ -122,6 +156,21 @@ export class PaperExecutionService {
 
   private getTrailingDistancePct(): number {
     return config.paperTrailingDistancePct;
+  }
+
+  private getSymbolRiskState(
+    positionKey: string
+  ): SymbolRiskState {
+    let state = this.symbolRisk.get(positionKey);
+    if (!state) {
+      state = {
+        consecutiveStops: 0,
+        cooldownUntil: 0,
+        bannedUntil: 0
+      };
+      this.symbolRisk.set(positionKey, state);
+    }
+    return state;
   }
 
   private estimateExecutableDexPrice(
@@ -253,17 +302,6 @@ export class PaperExecutionService {
 
   /**
    * Трейлинг-стоп.
-   *
-   * 1. Пока цена не ушла в нашу пользу
-   *    на trailTriggerPct — работает
-   *    обычный stopPrice.
-   * 2. После активации запоминаем лучшую
-   *    цену и подтягиваем stopPrice на
-   *    trailDistancePct от неё.
-   * 3. Стоп двигается ТОЛЬКО в сторону
-   *    прибыли, никогда назад.
-   * 4. triggerPct = 0 в конфиге —
-   *    трейлинг выключен.
    */
   private updateTrailingStop(
     trade: PaperTrade,
@@ -311,8 +349,6 @@ export class PaperExecutionService {
             trade.entryPrice
           ) * 100;
 
-    // Локальные копии: TS не сужает
-    // optional-поля объекта после мутаций
     const bestPrice =
       trade.trailBestPrice ??
       currentPrice;
@@ -411,6 +447,50 @@ export class PaperExecutionService {
       normalizeSymbol(
         signal.symbol
       );
+
+    const now = Date.now();
+    const riskState = this.getSymbolRiskState(positionKey);
+
+    // 1. Проверка бана инструмента при серии стопов
+    if (now < riskState.bannedUntil) {
+      const remainingMin = Math.ceil((riskState.bannedUntil - now) / 60000);
+      logger.debug(
+        {
+          symbol: signal.symbol,
+          bannedUntil: new Date(riskState.bannedUntil).toISOString(),
+          remainingMin
+        },
+        "Signal skipped: symbol is temporarily banned due to consecutive stop losses"
+      );
+      return null;
+    }
+
+    // 2. Проверка кулдауна после единичного стопа
+    if (now < riskState.cooldownUntil) {
+      const remainingSec = Math.ceil((riskState.cooldownUntil - now) / 1000);
+      logger.debug(
+        {
+          symbol: signal.symbol,
+          cooldownUntil: new Date(riskState.cooldownUntil).toISOString(),
+          remainingSec
+        },
+        "Signal skipped: symbol is in post-stop cooldown"
+      );
+      return null;
+    }
+
+    // 3. Проверка верхнего потолка спреда (защита от токсичных пулов)
+    if (signal.spreadPct > MAX_ENTRY_SPREAD_PCT) {
+      logger.warn(
+        {
+          symbol: signal.symbol,
+          spreadPct: round(signal.spreadPct, 3),
+          maxEntrySpreadPct: MAX_ENTRY_SPREAD_PCT
+        },
+        "Signal skipped: entry spread exceeds safety threshold (potential bad DEX pool mapping)"
+      );
+      return null;
+    }
 
     if (
       this.openTrades.has(
@@ -1195,6 +1275,41 @@ export class PaperExecutionService {
       );
 
       return null;
+    }
+
+    // --- ОБНОВЛЕНИЕ РИСК-СОСТОЯНИЯ СИМВОЛА ПОСЛЕ ЗАКРЫТИЯ ---
+    const riskState = this.getSymbolRiskState(positionKey);
+
+    if (closeReason === "stop_loss") {
+      riskState.consecutiveStops += 1;
+      riskState.cooldownUntil = now + SYMBOL_STOP_COOLDOWN_MS;
+
+      logger.warn(
+        {
+          symbol: trade.symbol,
+          consecutiveStops: riskState.consecutiveStops,
+          cooldownMin: SYMBOL_STOP_COOLDOWN_MS / 60000
+        },
+        "Stop loss triggered: per-symbol cooldown activated"
+      );
+
+      if (riskState.consecutiveStops >= MAX_CONSECUTIVE_STOPS) {
+        riskState.bannedUntil = now + SYMBOL_BAN_DURATION_MS;
+        logger.error(
+          {
+            symbol: trade.symbol,
+            consecutiveStops: riskState.consecutiveStops,
+            bannedHours: SYMBOL_BAN_DURATION_MS / 3600000
+          },
+          "Consecutive stop loss limit reached: symbol temporarily banned"
+        );
+      }
+    } else if (
+      closeReason === "mean_reverted_profit" ||
+      closeReason === "trailing_stop"
+    ) {
+      // Сбрасываем счетчик при успешной сделке
+      riskState.consecutiveStops = 0;
     }
 
     const depositBeforeClose =
