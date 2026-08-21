@@ -233,26 +233,29 @@ export class PaperExecutionService {
     exitBid: number,
     exitAsk: number
   ): boolean {
+    const stopPrice =
+      trade.stopPrice;
+  
     if (
       !isFinitePositive(
-        trade.stopPrice
+        stopPrice
       )
     ) {
       return false;
     }
-
+  
     if (
       trade.direction === "LONG"
     ) {
       return (
         exitBid <=
-        trade.stopPrice
+        stopPrice
       );
     }
-
+  
     return (
       exitAsk >=
-      trade.stopPrice
+      stopPrice
     );
   }
 
