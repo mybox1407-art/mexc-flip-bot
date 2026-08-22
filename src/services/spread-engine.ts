@@ -86,6 +86,16 @@ const MIN_HISTORY_POINTS = 2;
  */
 const MAX_ENTRY_SPREAD_PCT = 4.5;
 
+/**
+ * Окно для расчёта adverse momentum (10 сек).
+ */
+const ADVERSE_MOMENTUM_WINDOW_MS = 10_000;
+
+/**
+ * Порог adverse momentum (0.25%).
+ */
+const ADVERSE_MOMENTUM_THRESHOLD_PCT = 0.25;
+
 function normalizeSymbol(
   value: string
 ): string {
@@ -987,6 +997,36 @@ export class SpreadEngine {
       return null;
     }
 
+    // Adverse momentum filter
+    const adverseMomentum =
+      this.calculateAdverseMomentum(
+        state.mexcHistory,
+        direction
+      );
+
+    if (
+      adverseMomentum >
+      ADVERSE_MOMENTUM_THRESHOLD_PCT
+    ) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          direction,
+
+          adverseMomentum:
+            round(adverseMomentum, 4),
+
+          threshold:
+            ADVERSE_MOMENTUM_THRESHOLD_PCT
+        },
+        "Adverse momentum filter blocked entry"
+      );
+
+      return null;
+    }
+
     if (
       !Number.isFinite(spreadPct) ||
       spreadPct <= 0
@@ -1074,6 +1114,9 @@ export class SpreadEngine {
 
         confirmCount:
           state.confirmCount,
+
+        adverseMomentum:
+          round(adverseMomentum, 4),
 
         reason
       },
@@ -1337,6 +1380,76 @@ export class SpreadEngine {
       (slopePerMs * 60_000) /
       avgPrice
     ) * 100;
+  }
+
+  /**
+   * Adverse momentum: измеряет ускорение цены против позиции.
+   *
+   * Для LONG: если цена ускоряется вверх — это плохо (шортить растущее).
+   * Для SHORT: если цена ускоряется вниз — это плохо (лонговать падающее).
+   *
+   * Возвращает величину в %, положительное значение = adverse.
+   */
+  private calculateAdverseMomentum(
+    history: PriceHistoryPoint[],
+    direction: "LONG" | "SHORT"
+  ): number {
+    const cutoff =
+      Date.now() - ADVERSE_MOMENTUM_WINDOW_MS;
+
+    const points = history
+      .filter(
+        (item) =>
+          item.ts >= cutoff &&
+          isPositiveFinite(item.price)
+      )
+      .sort((a, b) => a.ts - b.ts);
+
+    if (points.length < 5) {
+      return 0;
+    }
+
+    const n = points.length;
+
+    // Разбиваем окно пополам: первая половина vs вторая половина
+    const midIndex = Math.floor(n / 2);
+
+    const firstHalfStart = 0;
+    const firstHalfEnd = midIndex - 1;
+
+    const secondHalfStart = midIndex;
+    const secondHalfEnd = n - 1;
+
+    if (
+      firstHalfEnd < firstHalfStart ||
+      secondHalfEnd < secondHalfStart
+    ) {
+      return 0;
+    }
+
+    const p1 = points[firstHalfStart].price;
+    const p2 = points[firstHalfEnd].price;
+    const p3 = points[secondHalfStart].price;
+    const p4 = points[secondHalfEnd].price;
+
+    // Скорость в первой половине
+    const v1 =
+      (p2 - p1) / p1 * 100;
+
+    // Скорость во второй половине
+    const v2 =
+      (p4 - p3) / p3 * 100;
+
+    // Ускорение
+    const acceleration = v2 - v1;
+
+    // Для LONG: положительное ускорение = плохо (цена разгоняется вверх)
+    // Для SHORT: отрицательное ускорение = плохо (цена разгоняется вниз)
+    if (direction === "LONG") {
+      return acceleration > 0 ? acceleration : 0;
+    } else {
+      return acceleration < 0 ? -acceleration : 0;
+    }
   }
 
   private isValidDexPair(
