@@ -1386,7 +1386,7 @@ export class SpreadEngine {
       );
 
     if (
-      points.length < 5
+      points.length < 4
     ) {
       logger.debug(
         {
@@ -1397,7 +1397,7 @@ export class SpreadEngine {
             points.length,
 
           minimum:
-            5,
+            4,
 
           lookbackMs:
             ADVERSE_MOMENTUM_WINDOW_MS
@@ -1474,15 +1474,6 @@ export class SpreadEngine {
 
     let adverseMomentum = 0;
 
-    /**
-     * LONG:
-     * цена MEXC ускоряется вниз —
-     * вход против продолжающегося падения.
-     *
-     * SHORT:
-     * цена MEXC ускоряется вверх —
-     * вход против продолжающегося роста.
-     */
     if (
       direction === "LONG" &&
       acceleration < 0
