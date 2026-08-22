@@ -1063,6 +1063,8 @@ export class SpreadEngine {
       state.firstConfirmEntryPrice;
 
     if (
+      typeof firstNetEdgePct !==
+        "number" ||
       !Number.isFinite(
         firstNetEdgePct
       ) ||
@@ -1083,25 +1085,31 @@ export class SpreadEngine {
       return null;
     }
 
+    const confirmedFirstNetEdgePct =
+      firstNetEdgePct;
+
+    const confirmedFirstEntryPrice =
+      firstEntryPrice;
+
     const netEdgeDecayPct =
-      firstNetEdgePct -
+      confirmedFirstNetEdgePct -
       netEdgePct;
 
     const adverseMovePct =
       direction === "LONG"
         ? (
             (
-              firstEntryPrice -
+              confirmedFirstEntryPrice -
               entryPrice
             ) /
-            firstEntryPrice
+            confirmedFirstEntryPrice
           ) * 100
         : (
             (
               entryPrice -
-              firstEntryPrice
+              confirmedFirstEntryPrice
             ) /
-            firstEntryPrice
+            confirmedFirstEntryPrice
           ) * 100;
 
     if (
@@ -1116,7 +1124,10 @@ export class SpreadEngine {
           direction,
 
           firstNetEdgePct:
-            round(firstNetEdgePct, 4),
+            round(
+              confirmedFirstNetEdgePct,
+              4
+            ),
 
           currentNetEdgePct:
             round(netEdgePct, 4),
@@ -1147,7 +1158,10 @@ export class SpreadEngine {
           direction,
 
           firstEntryPrice:
-            round(firstEntryPrice, 8),
+            round(
+              confirmedFirstEntryPrice,
+              8
+            ),
 
           currentEntryPrice:
             round(entryPrice, 8),
