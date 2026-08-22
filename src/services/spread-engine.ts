@@ -92,7 +92,13 @@ const MAX_ENTRY_SPREAD_PCT = 4.5;
 const ADVERSE_MOMENTUM_WINDOW_MS = 10_000;
 
 /**
- * Порог adverse momentum (0.25%).
+ * Порог направленного движения MEXC против позиции.
+ *
+ * SHORT блокируется, если MEXC продолжает расти
+ * более чем на 0.25% во второй половине окна.
+ *
+ * LONG блокируется, если MEXC продолжает падать
+ * более чем на 0.25% во второй половине окна.
  */
 const ADVERSE_MOMENTUM_THRESHOLD_PCT = 0.25;
 
@@ -468,7 +474,6 @@ export class SpreadEngine {
     this.recordMexcPrice(
       state,
       mexcMid,
-      ticker.timestamp,
       now
     );
 
@@ -1244,28 +1249,25 @@ export class SpreadEngine {
   private recordMexcPrice(
     state: SymbolState,
     mexcMid: number,
-    tickerTimestamp: number,
-    fallbackNow: number
+    now: number
   ): void {
-    const timestamp = fallbackNow;
-
     if (
       state.lastMexcHistoryTs ===
-      timestamp
+      now
     ) {
       return;
     }
 
     state.lastMexcHistoryTs =
-      timestamp;
+      now;
 
     state.mexcHistory.push({
       price: mexcMid,
-      ts: timestamp
+      ts: now
     });
 
     const cutoff =
-      fallbackNow -
+      now -
       MEXC_HISTORY_WINDOW_MS;
 
     state.mexcHistory =
@@ -1468,26 +1470,29 @@ export class SpreadEngine {
         secondStart
       ) * 100;
 
-    const acceleration =
-      secondVelocity -
-      firstVelocity;
-
     let adverseMomentum = 0;
 
+    /**
+     * LONG:
+     * MEXC продолжает заметно падать во второй половине окна.
+     *
+     * SHORT:
+     * MEXC продолжает заметно расти во второй половине окна.
+     */
     if (
       direction === "LONG" &&
-      acceleration < 0
+      secondVelocity < 0
     ) {
       adverseMomentum =
-        -acceleration;
+        -secondVelocity;
     }
 
     if (
       direction === "SHORT" &&
-      acceleration > 0
+      secondVelocity > 0
     ) {
       adverseMomentum =
-        acceleration;
+        secondVelocity;
     }
 
     logger.debug(
@@ -1502,9 +1507,6 @@ export class SpreadEngine {
 
         secondVelocity:
           round(secondVelocity, 4),
-
-        acceleration:
-          round(acceleration, 4),
 
         adverseMomentum:
           round(adverseMomentum, 4),
