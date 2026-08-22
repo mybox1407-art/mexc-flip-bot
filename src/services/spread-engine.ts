@@ -30,8 +30,6 @@ export interface AnchorStatus {
   dexDriftPct: number;
   dexDirectionalDriftPct: number;
 
-  // OLS-наклон DEX цены, % в минуту.
-  // > 0 — DEX растёт, < 0 — падает.
   dexTrendSlopePct?: number;
 
   mexcBid: number;
@@ -60,16 +58,19 @@ interface SymbolState {
   lastMexcHistoryTs?: number;
 
   lastDirection?: "LONG" | "SHORT";
+
   confirmCount: number;
   firstConfirmAt: number;
+  lastConfirmSampleAt: number;
+
+  firstConfirmNetEdgePct?: number;
+  firstConfirmEntryPrice?: number;
 
   cooldownUntil: number;
   lastSignalAt: number;
 
   lastLongSignalAt: number;
   lastShortSignalAt: number;
-
-  lastConfirmedDexUpdatedAt?: number;
 }
 
 const DEX_HISTORY_WINDOW_MS = 120_000;
@@ -81,10 +82,32 @@ const MEXC_TREND_BLOCK_PCT = 0.3;
 const MIN_HISTORY_POINTS = 2;
 
 /**
- * Верхняя граница спреда для генерации сигналов (4.5%).
- * Все что выше — битый пул или чужой токен с тем же тикером.
+ * Верхняя граница спреда для генерации сигналов.
+ * Всё, что выше, обычно означает битый маппинг
+ * или нерелевантную DEX-пару.
  */
 const MAX_ENTRY_SPREAD_PCT = 4.5;
+
+/**
+ * Подтверждение входа по MEXC WS-снимкам.
+ * Первый снимок фиксирует сигнал,
+ * второй и третий подтверждают его устойчивость.
+ */
+const ENTRY_CONFIRM_SAMPLES = 3;
+const ENTRY_CONFIRM_INTERVAL_MS = 750;
+const ENTRY_CONFIRM_WINDOW_MS = 5_000;
+
+/**
+ * Допустимое ухудшение чистого edge от первого
+ * до последнего confirmation-снимка.
+ */
+const ENTRY_CONFIRM_MAX_NET_EDGE_DECAY_PCT = 0.10;
+
+/**
+ * Максимальное движение исполнимой цены против
+ * будущей позиции за период подтверждения.
+ */
+const ENTRY_CONFIRM_MAX_ADVERSE_MOVE_PCT = 0.25;
 
 function normalizeSymbol(
   value: string
@@ -230,10 +253,13 @@ export class SpreadEngine {
         {
           symbol,
           snapshotKey,
+
           priceUsd:
             pair.priceUsd,
+
           liquidityUsd:
             pair.liquidityUsd,
+
           volumeM5:
             pair.volumeM5
         },
@@ -261,8 +287,10 @@ export class SpreadEngine {
         {
           symbol,
           snapshotKey,
+
           rawDexPrice:
             pair.priceUsd,
+
           contractMultiplier,
           normalizedDexPrice
         },
@@ -274,8 +302,7 @@ export class SpreadEngine {
 
     const normalizedPair: DexPair = {
       ...pair,
-      priceUsd:
-        normalizedDexPrice
+      priceUsd: normalizedDexPrice
     };
 
     this.dexSnapshots.set(
@@ -290,8 +317,7 @@ export class SpreadEngine {
       this.getState(snapshotKey);
 
     state.dexHistory.push({
-      price:
-        normalizedDexPrice,
+      price: normalizedDexPrice,
       ts: now
     });
 
@@ -387,10 +413,13 @@ export class SpreadEngine {
         {
           tickerSymbol,
           snapshotKey,
+
           priceUsd:
             anchor.priceUsd,
+
           liquidityUsd:
             anchor.liquidityUsd,
+
           volumeM5:
             anchor.volumeM5
         },
@@ -495,6 +524,7 @@ export class SpreadEngine {
           dexPrice,
           mexcMid,
           deviationPct,
+
           maxDeviationPct:
             config.maxPriceDeviationPct
         },
@@ -523,8 +553,7 @@ export class SpreadEngine {
       ) * 100;
 
     return {
-      symbol:
-        tickerSymbol,
+      symbol: tickerSymbol,
 
       dexPrice,
 
@@ -587,9 +616,7 @@ export class SpreadEngine {
     ticker: MexcTicker
   ): FlipSignal | null {
     const status =
-      this.getAnchorStatus(
-        ticker
-      );
+      this.getAnchorStatus(ticker);
 
     if (!status) {
       return null;
@@ -721,7 +748,6 @@ export class SpreadEngine {
     const dexTrendSlopePct =
       status.dexTrendSlopePct ?? 0;
 
-    // Входной спред должен быть в допустимом диапазоне [minSpreadPct .. MAX_ENTRY_SPREAD_PCT]
     const longValid =
       Number.isFinite(
         status.longSpreadPct
@@ -744,26 +770,11 @@ export class SpreadEngine {
       !longValid &&
       !shortValid
     ) {
-      state.lastDirection =
-        undefined;
-
-      state.confirmCount = 0;
-      state.firstConfirmAt = 0;
-      state.lastConfirmedDexUpdatedAt =
-        undefined;
+      this.resetConfirmation(state);
 
       return null;
     }
 
-    /**
-     * LONG запрещён, если:
-     * - DEX падает (drift или OLS-тренд)
-     * - MEXC падает быстрее порога.
-     *
-     * SHORT запрещён, если:
-     * - DEX растёт (drift или OLS-тренд)
-     * - MEXC растёт быстрее порога.
-     */
     const longBlocked =
       status.dexDirectionalDriftPct <
         -config.maxDexDriftPct ||
@@ -928,68 +939,21 @@ export class SpreadEngine {
     }
 
     if (
-      state.lastConfirmedDexUpdatedAt ===
-      status.dexUpdatedAt
+      !Number.isFinite(spreadPct) ||
+      spreadPct <= 0
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          dexUpdatedAt:
-            status.dexUpdatedAt
-        },
-        "Duplicate DEX snapshot"
-      );
-
       return null;
     }
-
-    state.lastConfirmedDexUpdatedAt =
-      status.dexUpdatedAt;
-
-    const signalWindowMs =
-      Number(
-        config.signalWindowMs ??
-        5_000
-      );
 
     const now = Date.now();
 
-    if (
-      state.lastDirection !==
-      direction
-    ) {
-      state.lastDirection =
-        direction;
-
-      state.confirmCount = 1;
-      state.firstConfirmAt = now;
-    } else {
-      const confirmationAge =
-        now - state.firstConfirmAt;
-
-      if (
-        confirmationAge >
-        signalWindowMs
-      ) {
-        state.confirmCount = 1;
-        state.firstConfirmAt = now;
-      } else {
-        state.confirmCount += 1;
-      }
-    }
+    const entryPrice =
+      direction === "LONG"
+        ? status.mexcAsk
+        : status.mexcBid;
 
     if (
-      state.confirmCount <
-      config.signalConfirmTicks
-    ) {
-      return null;
-    }
-
-    if (
-      !Number.isFinite(spreadPct) ||
-      spreadPct <= 0
+      !isPositiveFinite(entryPrice)
     ) {
       return null;
     }
@@ -1019,26 +983,229 @@ export class SpreadEngine {
 
           netEdgePct,
 
-          minNetEdge:
+          minNetEdgePct:
             config.minNetEdgePct
         },
         "Net edge too low"
       );
 
+      this.resetConfirmation(state);
+
       return null;
     }
 
-    state.lastSignalAt =
-      now;
+    const directionChanged =
+      state.lastDirection !==
+      direction;
+
+    const confirmationExpired =
+      state.firstConfirmAt > 0 &&
+      now - state.firstConfirmAt >
+        ENTRY_CONFIRM_WINDOW_MS;
+
+    if (
+      directionChanged ||
+      confirmationExpired
+    ) {
+      state.lastDirection =
+        direction;
+
+      state.confirmCount = 1;
+      state.firstConfirmAt = now;
+      state.lastConfirmSampleAt = now;
+
+      state.firstConfirmNetEdgePct =
+        netEdgePct;
+
+      state.firstConfirmEntryPrice =
+        entryPrice;
+
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          direction,
+
+          confirmCount:
+            state.confirmCount,
+
+          requiredSamples:
+            ENTRY_CONFIRM_SAMPLES,
+
+          netEdgePct:
+            round(netEdgePct, 4),
+
+          entryPrice:
+            round(entryPrice, 8)
+        },
+        "Entry confirmation started"
+      );
+
+      return null;
+    }
+
+    if (
+      now - state.lastConfirmSampleAt <
+      ENTRY_CONFIRM_INTERVAL_MS
+    ) {
+      return null;
+    }
+
+    state.lastConfirmSampleAt = now;
+
+    state.confirmCount += 1;
+
+    const firstNetEdgePct =
+      state.firstConfirmNetEdgePct;
+
+    const firstEntryPrice =
+      state.firstConfirmEntryPrice;
+
+    if (
+      !Number.isFinite(
+        firstNetEdgePct
+      ) ||
+      !isPositiveFinite(
+        firstEntryPrice
+      )
+    ) {
+      state.confirmCount = 1;
+      state.firstConfirmAt = now;
+      state.lastConfirmSampleAt = now;
+
+      state.firstConfirmNetEdgePct =
+        netEdgePct;
+
+      state.firstConfirmEntryPrice =
+        entryPrice;
+
+      return null;
+    }
+
+    const netEdgeDecayPct =
+      firstNetEdgePct -
+      netEdgePct;
+
+    const adverseMovePct =
+      direction === "LONG"
+        ? (
+            (
+              firstEntryPrice -
+              entryPrice
+            ) /
+            firstEntryPrice
+          ) * 100
+        : (
+            (
+              entryPrice -
+              firstEntryPrice
+            ) /
+            firstEntryPrice
+          ) * 100;
+
+    if (
+      netEdgeDecayPct >
+      ENTRY_CONFIRM_MAX_NET_EDGE_DECAY_PCT
+    ) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          direction,
+
+          firstNetEdgePct:
+            round(firstNetEdgePct, 4),
+
+          currentNetEdgePct:
+            round(netEdgePct, 4),
+
+          netEdgeDecayPct:
+            round(netEdgeDecayPct, 4),
+
+          maxAllowedDecayPct:
+            ENTRY_CONFIRM_MAX_NET_EDGE_DECAY_PCT
+        },
+        "Entry confirmation rejected: net edge decayed"
+      );
+
+      this.resetConfirmation(state);
+
+      return null;
+    }
+
+    if (
+      adverseMovePct >
+      ENTRY_CONFIRM_MAX_ADVERSE_MOVE_PCT
+    ) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          direction,
+
+          firstEntryPrice:
+            round(firstEntryPrice, 8),
+
+          currentEntryPrice:
+            round(entryPrice, 8),
+
+          adverseMovePct:
+            round(adverseMovePct, 4),
+
+          maxAdverseMovePct:
+            ENTRY_CONFIRM_MAX_ADVERSE_MOVE_PCT
+        },
+        "Entry confirmation rejected: adverse MEXC move"
+      );
+
+      this.resetConfirmation(state);
+
+      return null;
+    }
+
+    if (
+      state.confirmCount <
+      ENTRY_CONFIRM_SAMPLES
+    ) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          direction,
+
+          confirmCount:
+            state.confirmCount,
+
+          requiredSamples:
+            ENTRY_CONFIRM_SAMPLES,
+
+          netEdgePct:
+            round(netEdgePct, 4),
+
+          netEdgeDecayPct:
+            round(netEdgeDecayPct, 4),
+
+          adverseMovePct:
+            round(adverseMovePct, 4)
+        },
+        "Entry confirmation sample accepted"
+      );
+
+      return null;
+    }
+
+    state.lastSignalAt = now;
 
     if (
       direction === "LONG"
     ) {
-      state.lastLongSignalAt =
-        now;
+      state.lastLongSignalAt = now;
     } else {
-      state.lastShortSignalAt =
-        now;
+      state.lastShortSignalAt = now;
     }
 
     logger.warn(
@@ -1075,10 +1242,18 @@ export class SpreadEngine {
         confirmCount:
           state.confirmCount,
 
+        entryConfirmNetEdgeDecayPct:
+          round(netEdgeDecayPct, 4),
+
+        entryConfirmAdverseMovePct:
+          round(adverseMovePct, 4),
+
         reason
       },
       "SIGNAL GENERATED"
     );
+
+    this.resetConfirmation(state);
 
     return {
       id:
@@ -1203,10 +1378,27 @@ export class SpreadEngine {
         round(dexTrendSlopePct, 4),
 
       confirmCount:
-        state.confirmCount,
+        ENTRY_CONFIRM_SAMPLES,
 
       reason
     };
+  }
+
+  private resetConfirmation(
+    state: SymbolState
+  ): void {
+    state.lastDirection =
+      undefined;
+
+    state.confirmCount = 0;
+    state.firstConfirmAt = 0;
+    state.lastConfirmSampleAt = 0;
+
+    state.firstConfirmNetEdgePct =
+      undefined;
+
+    state.firstConfirmEntryPrice =
+      undefined;
   }
 
   private recordMexcPrice(
@@ -1261,7 +1453,9 @@ export class SpreadEngine {
       history[0]?.price;
 
     const last =
-      history[history.length - 1]?.price;
+      history[
+        history.length - 1
+      ]?.price;
 
     if (
       !isPositiveFinite(first) ||
@@ -1276,9 +1470,6 @@ export class SpreadEngine {
     ) * 100;
   }
 
-  /**
-   * OLS-наклон цены, % в минуту.
-   */
   private calculateTrendSlope(
     history: PriceHistoryPoint[],
     windowMs: number,
@@ -1307,11 +1498,15 @@ export class SpreadEngine {
     let sumXY = 0;
     let sumXX = 0;
 
-    for (const point of points) {
+    for (
+      const point of points
+    ) {
       sumX += point.ts;
       sumY += point.price;
-      sumXY += point.ts * point.price;
-      sumXX += point.ts * point.ts;
+      sumXY +=
+        point.ts * point.price;
+      sumXX +=
+        point.ts * point.ts;
     }
 
     const denominator =
@@ -1322,8 +1517,10 @@ export class SpreadEngine {
     }
 
     const slopePerMs =
-      (n * sumXY - sumX * sumY) /
-      denominator;
+      (
+        n * sumXY -
+        sumX * sumY
+      ) / denominator;
 
     const avgPrice = sumY / n;
 
@@ -1334,7 +1531,10 @@ export class SpreadEngine {
     }
 
     return (
-      (slopePerMs * 60_000) /
+      (
+        slopePerMs *
+        60_000
+      ) /
       avgPrice
     ) * 100;
   }
@@ -1389,14 +1589,24 @@ export class SpreadEngine {
         lastMexcHistoryTs:
           undefined,
 
+        lastDirection:
+          undefined,
+
         confirmCount: 0,
         firstConfirmAt: 0,
+        lastConfirmSampleAt: 0,
+
+        firstConfirmNetEdgePct:
+          undefined,
+
+        firstConfirmEntryPrice:
+          undefined,
+
         cooldownUntil: 0,
         lastSignalAt: 0,
+
         lastLongSignalAt: 0,
-        lastShortSignalAt: 0,
-        lastConfirmedDexUpdatedAt:
-          undefined
+        lastShortSignalAt: 0
       };
 
       this.states.set(
@@ -1454,7 +1664,9 @@ export class SpreadEngine {
       prices[0];
 
     const last =
-      prices[prices.length - 1];
+      prices[
+        prices.length - 1
+      ];
 
     const mid =
       (min + max) / 2;
