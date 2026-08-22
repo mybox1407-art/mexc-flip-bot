@@ -82,7 +82,7 @@ export interface FlipSignal {
   dexDriftPct: number;
   dexDirectionalDriftPct: number;
 
-  // NEW: OLS-наклон DEX цены, % в минуту
+  // OLS-наклон DEX цены, % в минуту.
   dexTrendSlopePct?: number;
 
   confirmCount: number;
