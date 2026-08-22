@@ -1406,6 +1406,14 @@ export class SpreadEngine {
       .sort((a, b) => a.ts - b.ts);
 
     if (points.length < 5) {
+      logger.debug(
+        {
+          historySize: history.length,
+          filteredSize: points.length,
+          minimum: 5
+        },
+        "Adverse momentum: insufficient points"
+      );
       return 0;
     }
 
@@ -1445,11 +1453,27 @@ export class SpreadEngine {
 
     // Для LONG: положительное ускорение = плохо (цена разгоняется вверх)
     // Для SHORT: отрицательное ускорение = плохо (цена разгоняется вниз)
+    let result = 0;
+
     if (direction === "LONG") {
-      return acceleration > 0 ? acceleration : 0;
+      result = acceleration > 0 ? acceleration : 0;
     } else {
-      return acceleration < 0 ? -acceleration : 0;
+      result = acceleration < 0 ? -acceleration : 0;
     }
+
+    logger.debug(
+      {
+        direction,
+        pointsCount: points.length,
+        v1: round(v1, 4),
+        v2: round(v2, 4),
+        acceleration: round(acceleration, 4),
+        result: round(result, 4)
+      },
+      "Adverse momentum calculated"
+    );
+
+    return result;
   }
 
   private isValidDexPair(
