@@ -41,9 +41,21 @@ const MIN_NET_PROFIT_PCT = 0.05;
 const SYMBOL_STOP_COOLDOWN_MS =
   15 * 60 * 1000;
 
+/**
+ * Лимит стопов подряд до временного бана инструмента.
+ */
+const MAX_CONSECUTIVE_STOPS = 2;
+
+/**
+ * Длительность бана инструмента при серии стопов.
+ */
+const SYMBOL_BAN_DURATION_MS =
+  2 * 60 * 60 * 1000;
+
 interface SymbolRiskState {
   consecutiveStops: number;
   cooldownUntil: number;
+  bannedUntil: number;
 }
 
 function normalizeSymbol(
@@ -170,7 +182,8 @@ export class PaperExecutionService {
     if (!state) {
       state = {
         consecutiveStops: 0,
-        cooldownUntil: 0
+        cooldownUntil: 0,
+        bannedUntil: 0
       };
 
       this.symbolRisk.set(
@@ -490,6 +503,34 @@ export class PaperExecutionService {
       this.getSymbolRiskState(
         positionKey
       );
+
+    if (
+      now <
+      riskState.bannedUntil
+    ) {
+      const remainingMin =
+        Math.ceil(
+          (
+            riskState.bannedUntil -
+            now
+          ) / 60000
+        );
+
+      logger.debug(
+        {
+          symbol:
+            signal.symbol,
+          bannedUntil:
+            new Date(
+              riskState.bannedUntil
+            ).toISOString(),
+          remainingMin
+        },
+        "Signal skipped: symbol is temporarily banned due to consecutive stop losses"
+      );
+
+      return null;
+    }
 
     if (
       now <
@@ -1498,17 +1539,10 @@ export class PaperExecutionService {
         positionKey
       );
 
-    /**
-     * Считаем только стопы после 20 секунд.
-     * Ранние 0.4% стопы не банят и не считаются
-     * в consecutiveStops.
-     */
-    const isMatureStop =
-      closeReason === "stop_loss" &&
-      holdMs >=
-        config.paperInitialStopWindowMs;
-
-    if (isMatureStop) {
+    if (
+      closeReason ===
+      "stop_loss"
+    ) {
       riskState.consecutiveStops += 1;
 
       riskState.cooldownUntil =
@@ -1523,28 +1557,32 @@ export class PaperExecutionService {
             riskState.consecutiveStops,
           cooldownMin:
             SYMBOL_STOP_COOLDOWN_MS /
-            60000,
-          holdMs
+            60000
         },
-        "Mature stop loss triggered: per-symbol cooldown activated"
-      );
-    } else if (
-      closeReason === "stop_loss"
-    ) {
-      logger.debug(
-        {
-          symbol:
-            trade.symbol,
-          holdMs,
-          initialStopWindowMs:
-            config.paperInitialStopWindowMs
-        },
-        "Early stop loss (<20s): cooldown only, no ban"
+        "Stop loss triggered: per-symbol cooldown activated"
       );
 
-      riskState.cooldownUntil =
-        now +
-        SYMBOL_STOP_COOLDOWN_MS;
+      if (
+        riskState.consecutiveStops >=
+        MAX_CONSECUTIVE_STOPS
+      ) {
+        riskState.bannedUntil =
+          now +
+          SYMBOL_BAN_DURATION_MS;
+
+        logger.error(
+          {
+            symbol:
+              trade.symbol,
+            consecutiveStops:
+              riskState.consecutiveStops,
+            bannedHours:
+              SYMBOL_BAN_DURATION_MS /
+              3600000
+          },
+          "Consecutive stop loss limit reached: symbol temporarily banned"
+        );
+      }
     } else if (
       closeReason ===
         "mean_reverted_profit" ||
