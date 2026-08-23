@@ -55,11 +55,11 @@ const SYMBOL_BAN_DURATION_MS =
 /**
  * Двухфазный стоп.
  *
- * Первые 20 секунд:
+ * Первые 30 секунд:
  *   LONG  — стоп ниже входа на 0.40%
  *   SHORT — стоп выше входа на 0.40%
  *
- * После 20 секунд:
+ * После 30 секунд:
  *   LONG  — стоп ниже входа на 1.5%
  *   SHORT — стоп выше входа на 1.5%
  */
@@ -88,10 +88,41 @@ const REGULAR_STOP_DISTANCE_PCT =
 const ANCHOR_BREAK_DISTANCE_PCT =
   0.40;
 
+/**
+ * Перед входом запрещаем сделку, если MEXC
+ * уже движется против направления арбитража.
+ *
+ * SHORT:
+ *   mid вырос >= 0.15% за последние 30 секунд
+ *   => не входить
+ *
+ * LONG:
+ *   mid упал >= 0.15% за последние 30 секунд
+ *   => не входить
+ */
+const ENTRY_MOMENTUM_WINDOW_MS =
+  30 * 1000;
+
+const ENTRY_MOMENTUM_MIN_SAMPLE_AGE_MS =
+  20 * 1000;
+
+const ENTRY_MOMENTUM_BLOCK_PCT =
+  0.15;
+
+const PRICE_HISTORY_TTL_MS =
+  90 * 1000;
+
 interface SymbolRiskState {
   consecutiveStops: number;
   cooldownUntil: number;
   bannedUntil: number;
+}
+
+interface PriceSample {
+  timestamp: number;
+  mid: number;
+  bid: number;
+  ask: number;
 }
 
 function normalizeSymbol(
@@ -137,6 +168,13 @@ export class PaperExecutionService {
 
   private readonly symbolRisk =
     new Map<string, SymbolRiskState>();
+
+  /**
+   * История mid MEXC по символу.
+   * Нужна, чтобы не входить в уже идущий импульс.
+   */
+  private readonly priceHistory =
+    new Map<string, PriceSample[]>();
 
   private readonly maxOpenTrades = 3;
 
@@ -235,6 +273,197 @@ export class PaperExecutionService {
     return state;
   }
 
+  private recordPriceSample(
+    positionKey: string,
+    bid: number,
+    ask: number,
+    timestamp: number
+  ): void {
+    if (
+      !isFinitePositive(
+        bid
+      ) ||
+      !isFinitePositive(
+        ask
+      ) ||
+      ask < bid
+    ) {
+      return;
+    }
+
+    const mid =
+      (
+        bid +
+        ask
+      ) / 2;
+
+    if (
+      !isFinitePositive(
+        mid
+      )
+    ) {
+      return;
+    }
+
+    let samples =
+      this.priceHistory.get(
+        positionKey
+      );
+
+    if (
+      !samples
+    ) {
+      samples = [];
+
+      this.priceHistory.set(
+        positionKey,
+        samples
+      );
+    }
+
+    const lastSample =
+      samples[
+        samples.length - 1
+      ];
+
+    if (
+      !lastSample ||
+      lastSample.timestamp !==
+        timestamp
+    ) {
+      samples.push({
+        timestamp,
+        mid,
+        bid,
+        ask
+      });
+    }
+
+    const cutoff =
+      timestamp -
+      PRICE_HISTORY_TTL_MS;
+
+    while (
+      samples.length > 0 &&
+      samples[0].timestamp <
+        cutoff
+    ) {
+      samples.shift();
+    }
+  }
+
+  /**
+   * Возвращает изменение mid MEXC за окно
+   * ENTRY_MOMENTUM_WINDOW_MS.
+   *
+   * null — недостаточно истории.
+   */
+  private getMomentumPct(
+    positionKey: string,
+    now: number
+  ): number | null {
+    const samples =
+      this.priceHistory.get(
+        positionKey
+      );
+
+    if (
+      !samples ||
+      samples.length < 2
+    ) {
+      return null;
+    }
+
+    const targetTs =
+      now -
+      ENTRY_MOMENTUM_WINDOW_MS;
+
+    let reference:
+      | PriceSample
+      | null = null;
+
+    for (
+      const sample of samples
+    ) {
+      const ageMs =
+        now -
+        sample.timestamp;
+
+      if (
+        ageMs <
+        ENTRY_MOMENTUM_MIN_SAMPLE_AGE_MS
+      ) {
+        continue;
+      }
+
+      if (
+        !reference ||
+        Math.abs(
+          sample.timestamp -
+            targetTs
+        ) <
+          Math.abs(
+            reference.timestamp -
+              targetTs
+          )
+      ) {
+        reference =
+          sample;
+      }
+    }
+
+    if (
+      !reference
+    ) {
+      return null;
+    }
+
+    const latest =
+      samples[
+        samples.length - 1
+      ];
+
+    if (
+      !isFinitePositive(
+        reference.mid
+      ) ||
+      !isFinitePositive(
+        latest.mid
+      )
+    ) {
+      return null;
+    }
+
+    return (
+      (
+        (
+          latest.mid -
+          reference.mid
+        ) /
+        reference.mid
+      ) * 100
+    );
+  }
+
+  private isMomentumAgainstPosition(
+    direction: "LONG" | "SHORT",
+    momentumPct: number
+  ): boolean {
+    if (
+      direction === "SHORT"
+    ) {
+      return (
+        momentumPct >=
+        ENTRY_MOMENTUM_BLOCK_PCT
+      );
+    }
+
+    return (
+      momentumPct <=
+      -ENTRY_MOMENTUM_BLOCK_PCT
+    );
+  }
+
   private estimateExecutableDexPrice(
     anchor: AnchorStatus,
     qtyUsd: number,
@@ -273,8 +502,8 @@ export class PaperExecutionService {
   /**
    * Обновляет динамический двухфазный стоп.
    *
-   * Первые 20 секунд стоп равен 0.40%.
-   * После 20 секунд стоп становится 1.5%.
+   * Первые 30 секунд стоп равен 0.40%.
+   * После 30 секунд стоп становится 1.5%.
    *
    * Если трейлинг уже поднял/опустил стоп,
    * стоп не расширяется обратно.
@@ -831,6 +1060,65 @@ export class PaperExecutionService {
       return null;
     }
 
+    this.recordPriceSample(
+      positionKey,
+      mexcBid,
+      mexcAsk,
+      now
+    );
+
+    const momentumPct =
+      this.getMomentumPct(
+        positionKey,
+        now
+      );
+
+    if (
+      momentumPct ===
+      null
+    ) {
+      logger.debug(
+        {
+          symbol:
+            signal.symbol,
+
+          direction:
+            signal.direction
+        },
+        "Entry momentum filter skipped: insufficient MEXC price history"
+      );
+    } else if (
+      this.isMomentumAgainstPosition(
+        signal.direction,
+        momentumPct
+      )
+    ) {
+      logger.warn(
+        {
+          symbol:
+            signal.symbol,
+
+          direction:
+            signal.direction,
+
+          momentumPct:
+            round(
+              momentumPct,
+              4
+            ),
+
+          blockPct:
+            ENTRY_MOMENTUM_BLOCK_PCT,
+
+          windowMs:
+            ENTRY_MOMENTUM_WINDOW_MS
+        },
+        "Signal skipped: MEXC momentum is moving against the intended position"
+      );
+
+      return null;
+    }
+
     const entryPrice =
       signal.direction === "LONG"
         ? mexcAsk
@@ -1201,6 +1489,18 @@ export class PaperExecutionService {
         anchorBreakDistancePct:
           ANCHOR_BREAK_DISTANCE_PCT,
 
+        entryMomentumPct:
+          momentumPct ===
+          null
+            ? undefined
+            : round(
+                momentumPct,
+                4
+              ),
+
+        entryMomentumBlockPct:
+          ENTRY_MOMENTUM_BLOCK_PCT,
+
         trailTriggerPct:
           trade.trailTriggerPct,
 
@@ -1230,6 +1530,30 @@ export class PaperExecutionService {
         ticker.symbol
       );
 
+    const now =
+      Date.now();
+
+    const tickerBid =
+      Number(
+        ticker.bid1
+      );
+
+    const tickerAsk =
+      Number(
+        ticker.ask1
+      );
+
+    this.recordPriceSample(
+      positionKey,
+      tickerBid,
+      tickerAsk,
+      Number.isFinite(
+        ticker.timestamp
+      )
+        ? ticker.timestamp
+        : now
+    );
+
     const trade =
       this.openTrades.get(
         positionKey
@@ -1249,9 +1573,6 @@ export class PaperExecutionService {
       return null;
     }
 
-    const now =
-      Date.now();
-
     const openedAt =
       new Date(
         trade.openedAt
@@ -1265,8 +1586,8 @@ export class PaperExecutionService {
 
     /**
      * Переключение двухфазного стопа:
-     * до 20 секунд — 0.40%,
-     * после 20 секунд — 1.5%.
+     * до 30 секунд — 0.40%,
+     * после 30 секунд — 1.5%.
      */
     const previousStopDistancePct =
       trade.stopDistancePct;
@@ -1306,14 +1627,10 @@ export class PaperExecutionService {
     }
 
     const exitBid =
-      Number(
-        ticker.bid1
-      );
+      tickerBid;
 
     const exitAsk =
-      Number(
-        ticker.ask1
-      );
+      tickerAsk;
 
     if (
       !isFinitePositive(
