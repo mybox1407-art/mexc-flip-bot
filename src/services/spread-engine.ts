@@ -70,6 +70,12 @@ interface SymbolState {
   lastShortSignalAt: number;
 
   lastConfirmedDexUpdatedAt?: number;
+
+  // Для двухфазного стопа
+  positionOpenedAt?: number;
+  positionDirection?: "LONG" | "SHORT";
+  positionEntryMexcMid?: number;
+  positionEntryDexPrice?: number;
 }
 
 const DEX_HISTORY_WINDOW_MS = 120_000;
@@ -85,6 +91,22 @@ const MIN_HISTORY_POINTS = 2;
  * Все что выше — битый пул или чужой токен с тем же тикером.
  */
 const MAX_ENTRY_SPREAD_PCT = 4.5;
+
+/**
+ * Двухфазный стоп:
+ * - Первые PHASE1_DURATION_MS: стоп PHASE1_STOP_PCT
+ * - После: стоп PHASE2_STOP_PCT
+ */
+const PHASE1_DURATION_MS = 20_000;
+const PHASE1_STOP_PCT = 0.40;
+const PHASE2_STOP_PCT = 1.50;
+
+/**
+ * Фильтр по поломке якоря:
+ * Если DEX двигается против тезиса на ANCHOR_BREAK_THRESHOLD_PCT
+ * больше, чем MEXC двигается в твою сторону → закрывай.
+ */
+const ANCHOR_BREAK_THRESHOLD_PCT = 0.40;
 
 function normalizeSymbol(
   value: string
@@ -1028,6 +1050,41 @@ export class SpreadEngine {
       return null;
     }
 
+    // === Фильтр по поломке якоря ===
+    const anchorBreakCheck =
+      this.checkAnchorBreak(
+        state,
+        direction,
+        status,
+        mexcDirectionalDriftPct
+      );
+
+    if (anchorBreakCheck) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          direction,
+
+          dexMovePct:
+            anchorBreakCheck.dexMovePct,
+
+          mexcMovePct:
+            anchorBreakCheck.mexcMovePct,
+
+          relativeMovePct:
+            anchorBreakCheck.relativeMovePct,
+
+          threshold:
+            ANCHOR_BREAK_THRESHOLD_PCT
+        },
+        "Anchor break filter blocked entry"
+      );
+
+      return null;
+    }
+
     state.lastSignalAt =
       now;
 
@@ -1040,6 +1097,13 @@ export class SpreadEngine {
       state.lastShortSignalAt =
         now;
     }
+
+    // Запоминаем параметры позиции для двухфазного стопа
+    state.positionOpenedAt = now;
+    state.positionDirection = direction;
+    state.positionEntryMexcMid =
+      (status.mexcBid + status.mexcAsk) / 2;
+    state.positionEntryDexPrice = status.dexPrice;
 
     logger.warn(
       {
@@ -1207,6 +1271,98 @@ export class SpreadEngine {
 
       reason
     };
+  }
+
+  /**
+   * Проверка на поломку якоря.
+   *
+   * SHORT: DEX растёт быстрее MEXC на ANCHOR_BREAK_THRESHOLD_PCT → плохо.
+   * LONG: DEX падает быстрее MEXC на ANCHOR_BREAK_THRESHOLD_PCT → плохо.
+   */
+  private checkAnchorBreak(
+    state: SymbolState,
+    direction: "LONG" | "SHORT",
+    status: AnchorStatus,
+    mexcDirectionalDriftPct: number
+  ): {
+    dexMovePct: number;
+    mexcMovePct: number;
+    relativeMovePct: number;
+  } | null {
+    const dexMovePct =
+      status.dexDirectionalDriftPct;
+
+    // SHORT: DEX должен падать или расти медленнее MEXC.
+    // LONG: DEX должен расти или падать медленнее MEXC.
+    let relativeMovePct: number;
+
+    if (direction === "SHORT") {
+      // DEX растёт, MEXC растёт → DEX должен расти медленнее.
+      // relativeMovePct = dexMovePct - mexcMovePct.
+      // Если > 0 → DEX растёт быстрее MEXC → плохо.
+      relativeMovePct =
+        dexMovePct - mexcDirectionalDriftPct;
+    } else {
+      // LONG
+      // DEX падает, MEXC падает → DEX должен падать медленнее.
+      // relativeMovePct = mexcMovePct - dexMovePct.
+      // Если > 0 → DEX падает быстрее MEXC → плохо.
+      relativeMovePct =
+        mexcDirectionalDriftPct - dexMovePct;
+    }
+
+    if (
+      relativeMovePct >
+      ANCHOR_BREAK_THRESHOLD_PCT
+    ) {
+      return {
+        dexMovePct,
+        mexcMovePct:
+          mexcDirectionalDriftPct,
+        relativeMovePct
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Двухфазный стоп.
+   *
+   * Возвращает порог стопа в зависимости от времени удержания.
+   */
+  public getStopLossPct(
+    symbol: string,
+    direction: "LONG" | "SHORT",
+    currentMexcMid: number,
+    currentDexPrice: number
+  ): number {
+    const state =
+      this.states.get(
+        this.getSnapshotKey(symbol)
+      );
+
+    if (
+      !state?.positionOpenedAt ||
+      state.positionDirection !==
+        direction
+    ) {
+      // Позиции нет → возвращаем PHASE2_STOP_PCT.
+      return PHASE2_STOP_PCT;
+    }
+
+    const now = Date.now();
+    const holdMs =
+      now - state.positionOpenedAt;
+
+    if (
+      holdMs <
+      PHASE1_DURATION_MS
+    ) {
+      return PHASE1_STOP_PCT;
+    }
+
+    return PHASE2_STOP_PCT;
   }
 
   private recordMexcPrice(
@@ -1396,7 +1552,12 @@ export class SpreadEngine {
         lastLongSignalAt: 0,
         lastShortSignalAt: 0,
         lastConfirmedDexUpdatedAt:
-          undefined
+          undefined,
+
+        positionOpenedAt: undefined,
+        positionDirection: undefined,
+        positionEntryMexcMid: undefined,
+        positionEntryDexPrice: undefined
       };
 
       this.states.set(
