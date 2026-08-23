@@ -103,7 +103,7 @@ export const config = {
   paperTradeUsdSize: numberEnv("PAPER_TRADE_USD_SIZE", 100),
   paperExitSpreadPct: numberEnv("PAPER_EXIT_SPREAD_PCT", 0.25),
   paperStopSpreadPct: numberEnv("PAPER_STOP_SPREAD_PCT", 0.7),
-  paperStopLossPct: numberEnv("PAPER_STOP_LOSS_PCT", 1),
+  paperStopLossPct: numberEnv("PAPER_STOP_LOSS_PCT", 1.8),
   paperMaxHoldMs: numberEnv("PAPER_MAX_HOLD_MS", 900_000),
   paperMaxAnchorMoveAgainstPct: numberEnv("PAPER_MAX_ANCHOR_MOVE_AGAINST_PCT", 1.0),
   paperMaxDexPriceImpactPct: numberEnv("PAPER_MAX_DEX_PRICE_IMPACT_PCT", 2.0),
