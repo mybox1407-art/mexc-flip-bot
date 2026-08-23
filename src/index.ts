@@ -222,7 +222,9 @@ async function bootstrap(): Promise<void> {
   logger.info(
     {
       initialDepositUsd: 100,
+
       maxOpenTrades: 3,
+
       tradeAllocationPct: 0.3,
 
       currentDepositUsd:
@@ -370,7 +372,9 @@ async function bootstrap(): Promise<void> {
           searchQuery
         );
 
-    if (!pair) {
+    if (
+      !pair
+    ) {
       logger.debug(
         {
           contractId:
@@ -456,7 +460,9 @@ async function bootstrap(): Promise<void> {
 
     await dexMapper.save();
 
-    if (mexcWsClient) {
+    if (
+      mexcWsClient
+    ) {
       mexcWsClient.subscribeTicker(
         contract.symbol
       );
@@ -534,7 +540,9 @@ async function bootstrap(): Promise<void> {
             pair
           );
 
-        if (!updated) {
+        if (
+          !updated
+        ) {
           logger.warn(
             {
               mexcSymbol
@@ -596,6 +604,18 @@ async function bootstrap(): Promise<void> {
           return;
         }
 
+        /**
+         * Важно:
+         * записываем каждый тикер до проверки
+         * нового торгового сигнала.
+         *
+         * Метод только обновляет историю MEXC
+         * и не открывает/закрывает сделки.
+         */
+        paperExecution.recordTicker(
+          ticker
+        );
+
         let openedNow = false;
 
         const signal =
@@ -603,7 +623,9 @@ async function bootstrap(): Promise<void> {
             ticker
           );
 
-        if (signal) {
+        if (
+          signal
+        ) {
           await spreadSignalsWriter.appendRow(
             signal as unknown as CsvRow
           );
@@ -661,7 +683,8 @@ async function bootstrap(): Promise<void> {
             openedNow = true;
 
             await paperTradesWriter.appendRow({
-              event: "OPEN",
+              event:
+                "OPEN",
 
               id:
                 opened.trade.id,
@@ -768,7 +791,13 @@ async function bootstrap(): Promise<void> {
           }
         }
 
-        if (openedNow) {
+        /**
+         * На тикере, где только что открыли сделку,
+         * повторно onTicker не вызываем.
+         */
+        if (
+          openedNow
+        ) {
           return;
         }
 
@@ -791,7 +820,8 @@ async function bootstrap(): Promise<void> {
         }
 
         await paperTradesWriter.appendRow({
-          event: "CLOSE",
+          event:
+            "CLOSE",
 
           id:
             closed.trade.id,
@@ -997,7 +1027,9 @@ async function bootstrap(): Promise<void> {
       }
     });
 
-  if (!mexcWsClient) {
+  if (
+    !mexcWsClient
+  ) {
     throw new Error(
       "MEXC WebSocket client was not initialized"
     );
@@ -1079,13 +1111,15 @@ async function bootstrap(): Promise<void> {
   );
 }
 
-bootstrap().catch((error) => {
-  logger.error(
-    {
-      err: error
-    },
-    "Bot crashed"
-  );
+bootstrap().catch(
+  (error) => {
+    logger.error(
+      {
+        err: error
+      },
+      "Bot crashed"
+    );
 
-  process.exit(1);
-});
+    process.exit(1);
+  }
+);
