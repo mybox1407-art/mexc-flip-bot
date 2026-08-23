@@ -86,22 +86,6 @@ const MIN_HISTORY_POINTS = 2;
  */
 const MAX_ENTRY_SPREAD_PCT = 4.5;
 
-/**
- * Окно для расчёта adverse momentum (10 сек).
- */
-const ADVERSE_MOMENTUM_WINDOW_MS = 10_000;
-
-/**
- * Порог направленного движения MEXC против позиции.
- *
- * SHORT блокируется, если MEXC продолжает расти
- * более чем на 0.25% во второй половине окна.
- *
- * LONG блокируется, если MEXC продолжает падать
- * более чем на 0.25% во второй половине окна.
- */
-const ADVERSE_MOMENTUM_THRESHOLD_PCT = 0.25;
-
 function normalizeSymbol(
   value: string
 ): string {
@@ -474,6 +458,7 @@ export class SpreadEngine {
     this.recordMexcPrice(
       state,
       mexcMid,
+      ticker.timestamp,
       now
     );
 
@@ -736,6 +721,7 @@ export class SpreadEngine {
     const dexTrendSlopePct =
       status.dexTrendSlopePct ?? 0;
 
+    // Входной спред должен быть в допустимом диапазоне [minSpreadPct .. MAX_ENTRY_SPREAD_PCT]
     const longValid =
       Number.isFinite(
         status.longSpreadPct
@@ -769,6 +755,15 @@ export class SpreadEngine {
       return null;
     }
 
+    /**
+     * LONG запрещён, если:
+     * - DEX падает (drift или OLS-тренд)
+     * - MEXC падает быстрее порога.
+     *
+     * SHORT запрещён, если:
+     * - DEX растёт (drift или OLS-тренд)
+     * - MEXC растёт быстрее порога.
+     */
     const longBlocked =
       status.dexDirectionalDriftPct <
         -config.maxDexDriftPct ||
@@ -932,6 +927,27 @@ export class SpreadEngine {
       return null;
     }
 
+    if (
+      state.lastConfirmedDexUpdatedAt ===
+      status.dexUpdatedAt
+    ) {
+      logger.debug(
+        {
+          symbol:
+            ticker.symbol,
+
+          dexUpdatedAt:
+            status.dexUpdatedAt
+        },
+        "Duplicate DEX snapshot"
+      );
+
+      return null;
+    }
+
+    state.lastConfirmedDexUpdatedAt =
+      status.dexUpdatedAt;
+
     const signalWindowMs =
       Number(
         config.signalWindowMs ??
@@ -970,56 +986,6 @@ export class SpreadEngine {
     ) {
       return null;
     }
-
-    const adverseMomentum =
-      this.calculateAdverseMomentum(
-        state.mexcHistory,
-        direction
-      );
-
-    if (
-      adverseMomentum >
-      ADVERSE_MOMENTUM_THRESHOLD_PCT
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          direction,
-
-          adverseMomentum:
-            round(adverseMomentum, 4),
-
-          threshold:
-            ADVERSE_MOMENTUM_THRESHOLD_PCT
-        },
-        "Adverse momentum filter blocked entry"
-      );
-
-      return null;
-    }
-
-    if (
-      state.lastConfirmedDexUpdatedAt ===
-      status.dexUpdatedAt
-    ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
-
-          dexUpdatedAt:
-            status.dexUpdatedAt
-        },
-        "Duplicate DEX snapshot"
-      );
-
-      return null;
-    }
-
-    state.lastConfirmedDexUpdatedAt =
-      status.dexUpdatedAt;
 
     if (
       !Number.isFinite(spreadPct) ||
@@ -1108,9 +1074,6 @@ export class SpreadEngine {
 
         confirmCount:
           state.confirmCount,
-
-        adverseMomentum:
-          round(adverseMomentum, 4),
 
         reason
       },
@@ -1249,25 +1212,32 @@ export class SpreadEngine {
   private recordMexcPrice(
     state: SymbolState,
     mexcMid: number,
-    now: number
+    tickerTimestamp: number,
+    fallbackNow: number
   ): void {
+    const timestamp =
+      Number.isFinite(tickerTimestamp) &&
+      tickerTimestamp > 0
+        ? tickerTimestamp
+        : fallbackNow;
+
     if (
       state.lastMexcHistoryTs ===
-      now
+      timestamp
     ) {
       return;
     }
 
     state.lastMexcHistoryTs =
-      now;
+      timestamp;
 
     state.mexcHistory.push({
       price: mexcMid,
-      ts: now
+      ts: timestamp
     });
 
     const cutoff =
-      now -
+      fallbackNow -
       MEXC_HISTORY_WINDOW_MS;
 
     state.mexcHistory =
@@ -1306,6 +1276,9 @@ export class SpreadEngine {
     ) * 100;
   }
 
+  /**
+   * OLS-наклон цены, % в минуту.
+   */
   private calculateTrendSlope(
     history: PriceHistoryPoint[],
     windowMs: number,
@@ -1364,160 +1337,6 @@ export class SpreadEngine {
       (slopePerMs * 60_000) /
       avgPrice
     ) * 100;
-  }
-
-  private calculateAdverseMomentum(
-    history: PriceHistoryPoint[],
-    direction: "LONG" | "SHORT"
-  ): number {
-    const now = Date.now();
-
-    const cutoff =
-      now - ADVERSE_MOMENTUM_WINDOW_MS;
-
-    const points = history
-      .filter(
-        (item) =>
-          item.ts >= cutoff &&
-          item.ts <= now &&
-          isPositiveFinite(item.price)
-      )
-      .sort(
-        (a, b) =>
-          a.ts - b.ts
-      );
-
-    if (
-      points.length < 4
-    ) {
-      logger.debug(
-        {
-          historySize:
-            history.length,
-
-          filteredSize:
-            points.length,
-
-          minimum:
-            4,
-
-          lookbackMs:
-            ADVERSE_MOMENTUM_WINDOW_MS
-        },
-        "Adverse momentum insufficient points"
-      );
-
-      return 0;
-    }
-
-    const midpoint =
-      Math.floor(
-        points.length / 2
-      );
-
-    const firstHalf =
-      points.slice(
-        0,
-        midpoint
-      );
-
-    const secondHalf =
-      points.slice(
-        midpoint
-      );
-
-    if (
-      firstHalf.length < 2 ||
-      secondHalf.length < 2
-    ) {
-      return 0;
-    }
-
-    const firstStart =
-      firstHalf[0]?.price;
-
-    const firstEnd =
-      firstHalf[
-        firstHalf.length - 1
-      ]?.price;
-
-    const secondStart =
-      secondHalf[0]?.price;
-
-    const secondEnd =
-      secondHalf[
-        secondHalf.length - 1
-      ]?.price;
-
-    if (
-      !isPositiveFinite(firstStart) ||
-      !isPositiveFinite(firstEnd) ||
-      !isPositiveFinite(secondStart) ||
-      !isPositiveFinite(secondEnd)
-    ) {
-      return 0;
-    }
-
-    const firstVelocity =
-      (
-        (firstEnd - firstStart) /
-        firstStart
-      ) * 100;
-
-    const secondVelocity =
-      (
-        (secondEnd - secondStart) /
-        secondStart
-      ) * 100;
-
-    let adverseMomentum = 0;
-
-    /**
-     * LONG:
-     * MEXC продолжает заметно падать во второй половине окна.
-     *
-     * SHORT:
-     * MEXC продолжает заметно расти во второй половине окна.
-     */
-    if (
-      direction === "LONG" &&
-      secondVelocity < 0
-    ) {
-      adverseMomentum =
-        -secondVelocity;
-    }
-
-    if (
-      direction === "SHORT" &&
-      secondVelocity > 0
-    ) {
-      adverseMomentum =
-        secondVelocity;
-    }
-
-    logger.debug(
-      {
-        direction,
-
-        pointsCount:
-          points.length,
-
-        firstVelocity:
-          round(firstVelocity, 4),
-
-        secondVelocity:
-          round(secondVelocity, 4),
-
-        adverseMomentum:
-          round(adverseMomentum, 4),
-
-        threshold:
-          ADVERSE_MOMENTUM_THRESHOLD_PCT
-      },
-      "Adverse momentum calculated"
-    );
-
-    return adverseMomentum;
   }
 
   private isValidDexPair(
