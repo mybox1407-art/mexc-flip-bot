@@ -42,6 +42,7 @@ export type CloseReason =
   | "trailing_stop"
   | "timeout"
   | "anchor_moved_against_position"
+  | "anchor_broken"
   | "anchor_stale"
   | "liquidity_drop";
 
