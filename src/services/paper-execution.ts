@@ -23,45 +23,23 @@ type PaperAction =
       trade: PaperTrade;
     };
 
-/**
- * Максимально допустимый входной спред.
- * Все что выше — битый маппинг или чужой токен.
- */
 const MAX_ENTRY_SPREAD_PCT = 4.5;
 
-/**
- * Минимальная net-прибыль после round-trip издержек
- * для закрытия по возврату спреда.
- */
 const MIN_NET_PROFIT_PCT = 0.05;
 
-/**
- * Кулдаун на инструмент после срабатывания stop_loss.
- */
 const SYMBOL_STOP_COOLDOWN_MS =
   15 * 60 * 1000;
 
-/**
- * Лимит стопов подряд до временного бана инструмента.
- */
 const MAX_CONSECUTIVE_STOPS = 2;
 
-/**
- * Длительность бана инструмента при серии стопов.
- */
 const SYMBOL_BAN_DURATION_MS =
   2 * 60 * 60 * 1000;
 
 /**
- * Двухфазный стоп.
+ * Двухфазный стоп:
  *
- * Первые 30 секунд:
- *   LONG  — стоп ниже входа на 0.40%
- *   SHORT — стоп выше входа на 0.40%
- *
- * После 30 секунд:
- *   LONG  — стоп ниже входа на 1.5%
- *   SHORT — стоп выше входа на 1.5%
+ * 0–30 секунд: 0.40%
+ * после 30 секунд: 1.5%
  */
 const INITIAL_STOP_DURATION_MS =
   30 * 1000;
@@ -73,32 +51,22 @@ const REGULAR_STOP_DISTANCE_PCT =
   1.5;
 
 /**
- * Допустимое движение DEX-якоря против торгового тезиса.
- *
- * LONG:
- *   DEX должен быть выше MEXC.
- *   Если DEX упал относительно якоря против позиции на 0.40%,
- *   закрываем сделку немедленно.
- *
- * SHORT:
- *   DEX должен быть ниже MEXC.
- *   Если DEX вырос относительно якоря против позиции на 0.40%,
- *   закрываем сделку немедленно.
+ * Немедленный выход при движении DEX-якоря
+ * против направления сделки на 0.40%.
  */
 const ANCHOR_BREAK_DISTANCE_PCT =
   0.40;
 
 /**
- * Перед входом запрещаем сделку, если MEXC
- * уже движется против направления арбитража.
+ * Momentum-фильтр перед входом:
  *
  * SHORT:
- *   mid вырос >= 0.15% за последние 30 секунд
- *   => не входить
+ *   MEXC вырос на 0.15% за 30 секунд
+ *   => вход запрещён.
  *
  * LONG:
- *   mid упал >= 0.15% за последние 30 секунд
- *   => не входить
+ *   MEXC упал на 0.15% за 30 секунд
+ *   => вход запрещён.
  */
 const ENTRY_MOMENTUM_WINDOW_MS =
   30 * 1000;
@@ -121,8 +89,6 @@ interface SymbolRiskState {
 interface PriceSample {
   timestamp: number;
   mid: number;
-  bid: number;
-  ask: number;
 }
 
 function normalizeSymbol(
@@ -138,7 +104,8 @@ function round(
   value: number,
   digits = 6
 ): number {
-  const factor = 10 ** digits;
+  const factor =
+    10 ** digits;
 
   return (
     Math.round(value * factor) /
@@ -170,8 +137,8 @@ export class PaperExecutionService {
     new Map<string, SymbolRiskState>();
 
   /**
-   * История mid MEXC по символу.
-   * Нужна, чтобы не входить в уже идущий импульс.
+   * История mid-цены MEXC
+   * для momentum-фильтра.
    */
   private readonly priceHistory =
     new Map<string, PriceSample[]>();
@@ -191,6 +158,39 @@ export class PaperExecutionService {
 
   getOpenTradesCount(): number {
     return this.openTrades.size;
+  }
+
+  /**
+   * Записывает каждый входящий MEXC ticker
+   * без открытия или закрытия позиции.
+   *
+   * Этот метод должен вызываться до
+   * spreadEngine.evaluate().
+   */
+  recordTicker(
+    ticker: MexcTicker
+  ): void {
+    const positionKey =
+      normalizeSymbol(
+        ticker.symbol
+      );
+
+    const bid =
+      Number(
+        ticker.bid1
+      );
+
+    const ask =
+      Number(
+        ticker.ask1
+      );
+
+    this.recordPriceSample(
+      positionKey,
+      bid,
+      ask,
+      Date.now()
+    );
   }
 
   private getTotalCostsPct(): number {
@@ -216,10 +216,6 @@ export class PaperExecutionService {
     );
   }
 
-  /**
-   * Возвращает актуальную дистанцию стопа
-   * с учетом времени удержания позиции.
-   */
   private getStopDistancePct(
     holdMs = 0
   ): number {
@@ -310,9 +306,7 @@ export class PaperExecutionService {
         positionKey
       );
 
-    if (
-      !samples
-    ) {
+    if (!samples) {
       samples = [];
 
       this.priceHistory.set(
@@ -321,23 +315,10 @@ export class PaperExecutionService {
       );
     }
 
-    const lastSample =
-      samples[
-        samples.length - 1
-      ];
-
-    if (
-      !lastSample ||
-      lastSample.timestamp !==
-        timestamp
-    ) {
-      samples.push({
-        timestamp,
-        mid,
-        bid,
-        ask
-      });
-    }
+    samples.push({
+      timestamp,
+      mid
+    });
 
     const cutoff =
       timestamp -
@@ -352,12 +333,6 @@ export class PaperExecutionService {
     }
   }
 
-  /**
-   * Возвращает изменение mid MEXC за окно
-   * ENTRY_MOMENTUM_WINDOW_MS.
-   *
-   * null — недостаточно истории.
-   */
   private getMomentumPct(
     positionKey: string,
     now: number
@@ -374,7 +349,7 @@ export class PaperExecutionService {
       return null;
     }
 
-    const targetTs =
+    const targetTimestamp =
       now -
       ENTRY_MOMENTUM_WINDOW_MS;
 
@@ -400,11 +375,11 @@ export class PaperExecutionService {
         !reference ||
         Math.abs(
           sample.timestamp -
-            targetTs
+            targetTimestamp
         ) <
           Math.abs(
             reference.timestamp -
-              targetTs
+              targetTimestamp
           )
       ) {
         reference =
@@ -499,15 +474,6 @@ export class PaperExecutionService {
     );
   }
 
-  /**
-   * Обновляет динамический двухфазный стоп.
-   *
-   * Первые 30 секунд стоп равен 0.40%.
-   * После 30 секунд стоп становится 1.5%.
-   *
-   * Если трейлинг уже поднял/опустил стоп,
-   * стоп не расширяется обратно.
-   */
   private updateTwoPhaseStop(
     trade: PaperTrade,
     holdMs: number
@@ -624,30 +590,26 @@ export class PaperExecutionService {
     ) {
       return (
         (
-          exitPrice -
+          (
+            exitPrice -
+            trade.entryPrice
+          ) /
           trade.entryPrice
-        ) /
-        trade.entryPrice
-      ) * 100;
+        ) * 100
+      );
     }
 
     return (
       (
-        trade.entryPrice -
-        exitPrice
-      ) /
-      trade.entryPrice
-    ) * 100;
+        (
+          trade.entryPrice -
+          exitPrice
+        ) /
+        trade.entryPrice
+      ) * 100
+    );
   }
 
-  /**
-   * Проверяет поломку DEX-якоря относительно
-   * исходного DEX-якоря сделки.
-   *
-   * Важный момент:
-   * сравниваем именно DEX с DEX, а не текущий спред MEXC/DEX.
-   * Это предотвращает закрытие только из-за движения MEXC.
-   */
   private isAnchorBroken(
     trade: PaperTrade,
     currentDexPrice: number
@@ -687,9 +649,6 @@ export class PaperExecutionService {
     );
   }
 
-  /**
-   * Обновление трейлинг-стопа.
-   */
   private updateTrailingStop(
     trade: PaperTrade,
     exitBid: number,
@@ -755,7 +714,8 @@ export class PaperExecutionService {
         return;
       }
 
-      trade.trailActive = true;
+      trade.trailActive =
+        true;
 
       trade.trailBestPrice =
         currentPrice;
@@ -787,15 +747,25 @@ export class PaperExecutionService {
 
       logger.debug(
         {
-          tradeId: trade.id,
-          symbol: trade.symbol,
-          direction: trade.direction,
-          movePct: round(
-            movePct,
-            4
-          ),
+          tradeId:
+            trade.id,
+
+          symbol:
+            trade.symbol,
+
+          direction:
+            trade.direction,
+
+          movePct:
+            round(
+              movePct,
+              4
+            ),
+
           triggerPct,
+
           distancePct,
+
           newStopPrice:
             trade.stopPrice
         },
@@ -882,14 +852,6 @@ export class PaperExecutionService {
       now <
       riskState.bannedUntil
     ) {
-      const remainingMin =
-        Math.ceil(
-          (
-            riskState.bannedUntil -
-            now
-          ) / 60000
-        );
-
       logger.debug(
         {
           symbol:
@@ -898,9 +860,7 @@ export class PaperExecutionService {
           bannedUntil:
             new Date(
               riskState.bannedUntil
-            ).toISOString(),
-
-          remainingMin
+            ).toISOString()
         },
         "Signal skipped: symbol is temporarily banned due to consecutive stop losses"
       );
@@ -912,14 +872,6 @@ export class PaperExecutionService {
       now <
       riskState.cooldownUntil
     ) {
-      const remainingSec =
-        Math.ceil(
-          (
-            riskState.cooldownUntil -
-            now
-          ) / 1000
-        );
-
       logger.debug(
         {
           symbol:
@@ -928,9 +880,7 @@ export class PaperExecutionService {
           cooldownUntil:
             new Date(
               riskState.cooldownUntil
-            ).toISOString(),
-
-          remainingSec
+            ).toISOString()
         },
         "Signal skipped: symbol is in post-stop cooldown"
       );
@@ -1059,13 +1009,6 @@ export class PaperExecutionService {
 
       return null;
     }
-
-    this.recordPriceSample(
-      positionKey,
-      mexcBid,
-      mexcAsk,
-      now
-    );
 
     const momentumPct =
       this.getMomentumPct(
@@ -1530,30 +1473,6 @@ export class PaperExecutionService {
         ticker.symbol
       );
 
-    const now =
-      Date.now();
-
-    const tickerBid =
-      Number(
-        ticker.bid1
-      );
-
-    const tickerAsk =
-      Number(
-        ticker.ask1
-      );
-
-    this.recordPriceSample(
-      positionKey,
-      tickerBid,
-      tickerAsk,
-      Number.isFinite(
-        ticker.timestamp
-      )
-        ? ticker.timestamp
-        : now
-    );
-
     const trade =
       this.openTrades.get(
         positionKey
@@ -1573,6 +1492,9 @@ export class PaperExecutionService {
       return null;
     }
 
+    const now =
+      Date.now();
+
     const openedAt =
       new Date(
         trade.openedAt
@@ -1584,11 +1506,6 @@ export class PaperExecutionService {
         now - openedAt
       );
 
-    /**
-     * Переключение двухфазного стопа:
-     * до 30 секунд — 0.40%,
-     * после 30 секунд — 1.5%.
-     */
     const previousStopDistancePct =
       trade.stopDistancePct;
 
@@ -1627,10 +1544,14 @@ export class PaperExecutionService {
     }
 
     const exitBid =
-      tickerBid;
+      Number(
+        ticker.bid1
+      );
 
     const exitAsk =
-      tickerAsk;
+      Number(
+        ticker.ask1
+      );
 
     if (
       !isFinitePositive(
@@ -1900,14 +1821,6 @@ export class PaperExecutionService {
       | number
       | undefined;
 
-    /**
-     * Приоритет выхода:
-     *
-     * 1. Поломка DEX-якоря — немедленный выход.
-     * 2. Двухфазный/трейлинг-стоп.
-     * 3. Возврат спреда с минимальной net-прибылью.
-     * 4. Timeout.
-     */
     if (
       anchorBroken
     ) {
