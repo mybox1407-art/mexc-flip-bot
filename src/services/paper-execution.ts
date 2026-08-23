@@ -32,10 +32,6 @@ const MAX_ENTRY_SPREAD_PCT = 4.5;
 /**
  * Минимальная net-прибыль после round-trip издержек
  * для закрытия по возврату спреда.
- *
- * Важно:
- * это процент от цены инструмента,
- * а не процент от размера депозита.
  */
 const MIN_NET_PROFIT_PCT = 0.05;
 
@@ -55,6 +51,42 @@ const MAX_CONSECUTIVE_STOPS = 2;
  */
 const SYMBOL_BAN_DURATION_MS =
   2 * 60 * 60 * 1000;
+
+/**
+ * Двухфазный стоп.
+ *
+ * Первые 20 секунд:
+ *   LONG  — стоп ниже входа на 0.40%
+ *   SHORT — стоп выше входа на 0.40%
+ *
+ * После 20 секунд:
+ *   LONG  — стоп ниже входа на 1.5%
+ *   SHORT — стоп выше входа на 1.5%
+ */
+const INITIAL_STOP_DURATION_MS =
+  30 * 1000;
+
+const INITIAL_STOP_DISTANCE_PCT =
+  0.40;
+
+const REGULAR_STOP_DISTANCE_PCT =
+  1.5;
+
+/**
+ * Допустимое движение DEX-якоря против торгового тезиса.
+ *
+ * LONG:
+ *   DEX должен быть выше MEXC.
+ *   Если DEX упал относительно якоря против позиции на 0.40%,
+ *   закрываем сделку немедленно.
+ *
+ * SHORT:
+ *   DEX должен быть ниже MEXC.
+ *   Если DEX вырос относительно якоря против позиции на 0.40%,
+ *   закрываем сделку немедленно.
+ */
+const ANCHOR_BREAK_DISTANCE_PCT =
+  0.40;
 
 interface SymbolRiskState {
   consecutiveStops: number;
@@ -103,10 +135,6 @@ export class PaperExecutionService {
   private readonly liquidityAtEntry =
     new Map<string, number>();
 
-  /**
-   * Состояние риска по каждому символу:
-   * отслеживание кулдаунов и серий стопов.
-   */
   private readonly symbolRisk =
     new Map<string, SymbolRiskState>();
 
@@ -150,8 +178,21 @@ export class PaperExecutionService {
     );
   }
 
-  private getStopDistancePct(): number {
-    return config.paperStopLossPct;
+  /**
+   * Возвращает актуальную дистанцию стопа
+   * с учетом времени удержания позиции.
+   */
+  private getStopDistancePct(
+    holdMs = 0
+  ): number {
+    if (
+      holdMs <
+      INITIAL_STOP_DURATION_MS
+    ) {
+      return INITIAL_STOP_DISTANCE_PCT;
+    }
+
+    return REGULAR_STOP_DISTANCE_PCT;
   }
 
   private getStopSlippagePct(): number {
@@ -215,11 +256,9 @@ export class PaperExecutionService {
 
   private calculateStopPrice(
     entryPrice: number,
-    direction: "LONG" | "SHORT"
+    direction: "LONG" | "SHORT",
+    stopDistancePct: number
   ): number {
-    const stopDistancePct =
-      this.getStopDistancePct();
-
     const multiplier =
       direction === "LONG"
         ? 1 - stopDistancePct / 100
@@ -229,6 +268,57 @@ export class PaperExecutionService {
       entryPrice *
       multiplier
     );
+  }
+
+  /**
+   * Обновляет динамический двухфазный стоп.
+   *
+   * Первые 20 секунд стоп равен 0.40%.
+   * После 20 секунд стоп становится 1.5%.
+   *
+   * Если трейлинг уже поднял/опустил стоп,
+   * стоп не расширяется обратно.
+   */
+  private updateTwoPhaseStop(
+    trade: PaperTrade,
+    holdMs: number
+  ): void {
+    if (
+      trade.trailActive
+    ) {
+      return;
+    }
+
+    const stopDistancePct =
+      this.getStopDistancePct(
+        holdMs
+      );
+
+    const newStopPrice =
+      this.calculateStopPrice(
+        trade.entryPrice,
+        trade.direction,
+        stopDistancePct
+      );
+
+    if (
+      !isFinitePositive(
+        newStopPrice
+      )
+    ) {
+      return;
+    }
+
+    trade.stopPrice =
+      round(
+        newStopPrice
+      );
+
+    trade.stopDistancePct =
+      round(
+        stopDistancePct,
+        4
+      );
   }
 
   private isStopTriggered(
@@ -319,6 +409,53 @@ export class PaperExecutionService {
       ) /
       trade.entryPrice
     ) * 100;
+  }
+
+  /**
+   * Проверяет поломку DEX-якоря относительно
+   * исходного DEX-якоря сделки.
+   *
+   * Важный момент:
+   * сравниваем именно DEX с DEX, а не текущий спред MEXC/DEX.
+   * Это предотвращает закрытие только из-за движения MEXC.
+   */
+  private isAnchorBroken(
+    trade: PaperTrade,
+    currentDexPrice: number
+  ): boolean {
+    if (
+      !isFinitePositive(
+        trade.dexAnchorAtEntry
+      ) ||
+      !isFinitePositive(
+        currentDexPrice
+      )
+    ) {
+      return false;
+    }
+
+    const dexMovePct =
+      (
+        (
+          currentDexPrice -
+          trade.dexAnchorAtEntry
+        ) /
+        trade.dexAnchorAtEntry
+      ) * 100;
+
+    if (
+      trade.direction === "LONG"
+    ) {
+      return (
+        dexMovePct <=
+        -ANCHOR_BREAK_DISTANCE_PCT
+      );
+    }
+
+    return (
+      dexMovePct >=
+      ANCHOR_BREAK_DISTANCE_PCT
+    );
   }
 
   /**
@@ -882,13 +1019,16 @@ export class PaperExecutionService {
       return null;
     }
 
-    const stopDistancePct =
-      this.getStopDistancePct();
+    const initialStopDistancePct =
+      this.getStopDistancePct(
+        0
+      );
 
     const stopPrice =
       this.calculateStopPrice(
         entryPrice,
-        signal.direction
+        signal.direction,
+        initialStopDistancePct
       );
 
     const trade: PaperTrade = {
@@ -968,7 +1108,7 @@ export class PaperExecutionService {
 
       stopDistancePct:
         round(
-          stopDistancePct,
+          initialStopDistancePct,
           4
         ),
 
@@ -1049,6 +1189,18 @@ export class PaperExecutionService {
         stopDistancePct:
           trade.stopDistancePct,
 
+        initialStopDurationMs:
+          INITIAL_STOP_DURATION_MS,
+
+        initialStopDistancePct:
+          INITIAL_STOP_DISTANCE_PCT,
+
+        regularStopDistancePct:
+          REGULAR_STOP_DISTANCE_PCT,
+
+        anchorBreakDistancePct:
+          ANCHOR_BREAK_DISTANCE_PCT,
+
         trailTriggerPct:
           trade.trailTriggerPct,
 
@@ -1110,6 +1262,48 @@ export class PaperExecutionService {
         0,
         now - openedAt
       );
+
+    /**
+     * Переключение двухфазного стопа:
+     * до 20 секунд — 0.40%,
+     * после 20 секунд — 1.5%.
+     */
+    const previousStopDistancePct =
+      trade.stopDistancePct;
+
+    this.updateTwoPhaseStop(
+      trade,
+      holdMs
+    );
+
+    if (
+      previousStopDistancePct !==
+      trade.stopDistancePct
+    ) {
+      logger.debug(
+        {
+          tradeId:
+            trade.id,
+
+          symbol:
+            trade.symbol,
+
+          direction:
+            trade.direction,
+
+          holdMs,
+
+          previousStopDistancePct,
+
+          currentStopDistancePct:
+            trade.stopDistancePct,
+
+          stopPrice:
+            trade.stopPrice
+        },
+        "Two-phase stop updated"
+      );
+    }
 
     const exitBid =
       Number(
@@ -1200,6 +1394,13 @@ export class PaperExecutionService {
       | number
       | undefined;
 
+    let anchorBroken =
+      false;
+
+    let dexMoveFromEntryPct:
+      | number
+      | undefined;
+
     if (
       anchor &&
       anchorIsFresh
@@ -1235,6 +1436,60 @@ export class PaperExecutionService {
                 ) /
                 exitBid
               ) * 100;
+
+        if (
+          isFinitePositive(
+            trade.dexAnchorAtEntry
+          )
+        ) {
+          dexMoveFromEntryPct =
+            (
+              (
+                freshDexPrice -
+                trade.dexAnchorAtEntry
+              ) /
+              trade.dexAnchorAtEntry
+            ) * 100;
+
+          anchorBroken =
+            this.isAnchorBroken(
+              trade,
+              freshDexPrice
+            );
+
+          if (
+            anchorBroken
+          ) {
+            logger.warn(
+              {
+                tradeId:
+                  trade.id,
+
+                symbol:
+                  trade.symbol,
+
+                direction:
+                  trade.direction,
+
+                dexAnchorAtEntry:
+                  trade.dexAnchorAtEntry,
+
+                currentDexPrice:
+                  freshDexPrice,
+
+                dexMoveFromEntryPct:
+                  round(
+                    dexMoveFromEntryPct,
+                    4
+                  ),
+
+                anchorBreakDistancePct:
+                  ANCHOR_BREAK_DISTANCE_PCT
+              },
+              "DEX ANCHOR BROKEN"
+            );
+          }
+        }
       }
 
       const entryLiquidity =
@@ -1328,7 +1583,49 @@ export class PaperExecutionService {
       | number
       | undefined;
 
+    /**
+     * Приоритет выхода:
+     *
+     * 1. Поломка DEX-якоря — немедленный выход.
+     * 2. Двухфазный/трейлинг-стоп.
+     * 3. Возврат спреда с минимальной net-прибылью.
+     * 4. Timeout.
+     */
     if (
+      anchorBroken
+    ) {
+      closeReason =
+        "anchor_broken";
+
+      exitPrice =
+        marketExitPrice;
+
+      logger.warn(
+        {
+          tradeId:
+            trade.id,
+
+          symbol:
+            trade.symbol,
+
+          direction:
+            trade.direction,
+
+          dexAnchorAtEntry:
+            trade.dexAnchorAtEntry,
+
+          currentDexPrice,
+
+          dexMoveFromEntryPct,
+
+          anchorBreakDistancePct:
+            ANCHOR_BREAK_DISTANCE_PCT,
+
+          marketExitPrice
+        },
+        "Closing trade: DEX anchor moved against thesis"
+      );
+    } else if (
       stopTriggered
     ) {
       closeReason =
@@ -1349,10 +1646,6 @@ export class PaperExecutionService {
       minHoldReached &&
       spreadExitReached
     ) {
-      /**
-       * Сначала считаем результат по реальной
-       * исполнимой рыночной цене.
-       */
       const grossPnlPctAtMarket =
         this.calculateGrossPnlPct(
           trade,
@@ -1363,11 +1656,6 @@ export class PaperExecutionService {
         grossPnlPctAtMarket -
         this.getTotalCostsPct();
 
-      /**
-       * Закрытие по возврату спреда допускается
-       * только после покрытия издержек и достижения
-       * минимальной net-прибыли.
-       */
       if (
         netPnlPctAtMarket >=
         MIN_NET_PROFIT_PCT
@@ -1412,11 +1700,6 @@ export class PaperExecutionService {
         "timeout";
     }
 
-    /**
-     * Если спред уже вернулся, но прибыль меньше
-     * минимального порога, timeout должен всё равно
-     * сработать на этом же тике.
-     */
     if (
       !closeReason &&
       minHoldReached &&
@@ -1718,6 +2001,9 @@ export class PaperExecutionService {
         stopPrice:
           closedTrade.stopPrice,
 
+        stopDistancePct:
+          closedTrade.stopDistancePct,
+
         stopTriggerPrice:
           closedTrade.stopTriggerPrice,
 
@@ -1749,6 +2035,17 @@ export class PaperExecutionService {
         holdMs,
 
         currentSpreadPct,
+
+        dexAnchorAtEntry:
+          closedTrade.dexAnchorAtEntry,
+
+        dexAnchorAtExit:
+          closedTrade.dexAnchorAtExit,
+
+        dexMoveFromEntryPct,
+
+        anchorBreakDistancePct:
+          ANCHOR_BREAK_DISTANCE_PCT,
 
         anchorAgeMs:
           anchor?.anchorAgeMs,
