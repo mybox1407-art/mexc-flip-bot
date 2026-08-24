@@ -353,22 +353,22 @@ async function bootstrap(): Promise<void> {
         contract.symbol
       )
     ) {
-      logger.info(
-        {
-          contractId:
-            contract.contractId,
+      //logger.info(
+      //  {
+      //    contractId:
+      //      contract.contractId,
 
-          symbol:
-            contract.symbol,
+      //    symbol:
+      //      contract.symbol,
 
-          displayName:
-            contract.displayName,
+      //    displayName:
+      //      contract.displayName,
 
-          baseCoin:
-            contract.baseCoin
-        },
-        "Skipping DEX lookup for unsupported synthetic contract"
-      );
+      //    baseCoin:
+      //      contract.baseCoin
+      //  },
+      //  "Skipping DEX lookup for unsupported synthetic contract"
+      //);
 
       return;
     }
@@ -393,18 +393,18 @@ async function bootstrap(): Promise<void> {
     if (
       !pair
     ) {
-      logger.debug(
-        {
-          contractId:
-            contract.contractId,
+      //logger.debug(
+      //  {
+      //    contractId:
+      //      contract.contractId,
 
-          symbol:
-            contract.symbol,
+      //    symbol:
+      //      contract.symbol,
 
-          searchQuery
-        },
-        "DEX pair not found"
-      );
+      //    searchQuery
+      //  },
+      //  "DEX pair not found"
+      //);
 
       return;
     }
@@ -561,12 +561,12 @@ async function bootstrap(): Promise<void> {
         if (
           !updated
         ) {
-          logger.warn(
-            {
-              mexcSymbol
-            },
-            "DEX price update failed"
-          );
+          //logger.warn(
+          //  {
+          //    mexcSymbol
+          //  },
+          //  "DEX price update failed"
+          //);
         }
 
         await dexPricesWriter.appendRow({
@@ -647,64 +647,64 @@ async function bootstrap(): Promise<void> {
             signal as unknown as CsvRow
           );
 
-          logger.warn(
-            {
-              symbol:
-                signal.symbol,
+          //logger.warn(
+          //  {
+          //    symbol:
+          //      signal.symbol,
 
-              direction:
-                signal.direction,
+          //    direction:
+          //      signal.direction,
 
-              spreadPct:
-                signal.spreadPct,
+          //    spreadPct:
+          //      signal.spreadPct,
 
-              netEdgePct:
-                signal.netEdgePct,
+          //    netEdgePct:
+          //      signal.netEdgePct,
 
-              dexPrice:
-                signal.dexPrice,
+          //    dexPrice:
+          //      signal.dexPrice,
 
-              mexcPrice:
-                signal.mexcPrice,
+          //    mexcPrice:
+          //      signal.mexcPrice,
 
-              mexcBid:
-                signal.mexcBid,
+          //    mexcBid:
+          //      signal.mexcBid,
 
-              mexcAsk:
-                signal.mexcAsk,
+          //    mexcAsk:
+          //      signal.mexcAsk,
 
-              mexcBookSpreadPct:
-                signal.mexcBookSpreadPct,
+          //    mexcBookSpreadPct:
+          //      signal.mexcBookSpreadPct,
 
-              anchorAgeMs:
-                signal.anchorAgeMs,
+          //    anchorAgeMs:
+          //      signal.anchorAgeMs,
 
-              dexUpdatedAt:
-                signal.dexUpdatedAt,
+          //    dexUpdatedAt:
+          //      signal.dexUpdatedAt,
 
-              dexDriftPct:
-                signal.dexDriftPct,
+          //    dexDriftPct:
+          //      signal.dexDriftPct,
 
-              dexDirectionalDriftPct:
-                signal.dexDirectionalDriftPct,
+          //    dexDirectionalDriftPct:
+          //      signal.dexDirectionalDriftPct,
 
-              dexTrendSlopePct:
-                signal.dexTrendSlopePct,
+          //    dexTrendSlopePct:
+          //      signal.dexTrendSlopePct,
 
-              entryRef:
-                signal.entryRef,
+          //    entryRef:
+          //      signal.entryRef,
 
-              reason:
-                signal.reason,
+          //    reason:
+          //      signal.reason,
 
-              currentDepositUsd:
-                paperExecution.getDepositUsd(),
+          //    currentDepositUsd:
+          //      paperExecution.getDepositUsd(),
 
-              openTrades:
-                paperExecution.getOpenTradesCount()
-            },
-            "DEX anchor deviation signal detected on MEXC"
-          );
+          //    openTrades:
+          //      paperExecution.getOpenTradesCount()
+          //  },
+          //  "DEX anchor deviation signal detected on MEXC"
+          //);
 
           const opened =
             paperExecution.onSignal(
@@ -1165,16 +1165,16 @@ async function bootstrap(): Promise<void> {
     );
   }
 
-  logger.info(
-    {
-      activeMappings:
-        activeMappings.length,
+  //logger.info(
+  //  {
+  //    activeMappings:
+  //      activeMappings.length,
 
-      subscribedTickers:
-        activeMappings.length
-    },
-    "Subscribed tickers for active DEX mappings"
-  );
+  //    subscribedTickers:
+  //      activeMappings.length
+  //  },
+  //  "Subscribed tickers for active DEX mappings"
+  //);
 
   dexPricePoller.start();
 
