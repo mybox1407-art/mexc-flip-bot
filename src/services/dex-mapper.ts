@@ -290,6 +290,19 @@ export class DexMapper {
     const normalized =
       normalizeSymbol(mexcSymbol);
 
+    // Фильтр: baseCoin.length < 2
+    if (baseCoin.length < 2) {
+      logger.debug(
+        {
+          mexcSymbol,
+          baseCoin
+        },
+        "Skipping DEX mapping: baseCoin too short"
+      );
+
+      throw new Error("baseCoin too short");
+    }
+
     const mapping: TokenMapping = {
       mexcSymbol,
 
