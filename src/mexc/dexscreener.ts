@@ -120,15 +120,15 @@ export class DexScreenerClient {
       const startedAt = Date.now();
 
       try {
-        logger.debug(
-          {
-            requestId,
-            attempt,
-            url,
-            query
-          },
-          "DexScreener request started"
-        );
+        //logger.debug(
+        //  {
+        //    requestId,
+        //    attempt,
+        //    url,
+        //    query
+        //  },
+        //  "DexScreener request started"
+        //);
 
         const response =
           await fetch(url);
@@ -141,20 +141,20 @@ export class DexScreenerClient {
             "retry-after"
           );
 
-        logger.debug(
-          {
-            requestId,
-            attempt,
-            status: response.status,
-            statusText: response.statusText,
-            ok: response.ok,
-            durationMs,
-            retryAfter,
-            url,
-            query
-          },
-          "DexScreener response received"
-        );
+        //logger.debug(
+        //  {
+        //    requestId,
+        //    attempt,
+        //    status: response.status,
+        //    statusText: response.statusText,
+        //    ok: response.ok,
+        //    durationMs,
+        //    retryAfter,
+        //    url,
+        //    query
+        //  },
+        //  "DexScreener response received"
+        //);
 
         if (response.status === 429) {
           const retryAfterSeconds =
@@ -229,18 +229,18 @@ export class DexScreenerClient {
         const payload =
           (await response.json()) as DexSearchResponse;
 
-        logger.debug(
-          {
-            requestId,
-            attempt,
-            pairCount:
-              payload.pairs?.length ?? 0,
-            url,
-            query,
-            durationMs
-          },
-          "DexScreener payload parsed"
-        );
+        //logger.debug(
+        //  {
+        //    requestId,
+        //    attempt,
+        //    pairCount:
+        //      payload.pairs?.length ?? 0,
+        //    url,
+        //    query,
+        //    durationMs
+        //  },
+        //  "DexScreener payload parsed"
+        //);
 
         return payload;
       } catch (error) {
@@ -295,13 +295,13 @@ export class DexScreenerClient {
         normalizedQuery
       )
     ) {
-      logger.debug(
-        {
-          query,
-          normalizedQuery
-        },
-        "DexScreener query skipped"
-      );
+      //logger.debug(
+      //  {
+      //    query,
+      //    normalizedQuery
+      //  },
+      //  "DexScreener query skipped"
+      //);
 
       return null;
     }
@@ -317,15 +317,15 @@ export class DexScreenerClient {
       );
 
     if (!payload?.pairs?.length) {
-      logger.info(
-        {
-          query,
-          url,
-          receivedPairs:
-            payload?.pairs?.length ?? 0
-        },
-        "DexScreener returned no pairs"
-      );
+      //logger.info(
+      //  {
+      //    query,
+      //    url,
+      //    receivedPairs:
+      //      payload?.pairs?.length ?? 0
+      //  },
+      //  "DexScreener returned no pairs"
+      //);
 
       return null;
     }
@@ -578,39 +578,39 @@ export class DexScreenerClient {
     const best =
       candidates[0] ?? null;
 
-    logger.info(
-      {
-        query,
-        receivedPairs:
-          payload.pairs.length,
-        validCandidates:
-          candidates.length,
+    //logger.info(
+    //  {
+    //    query,
+    //    receivedPairs:
+    //      payload.pairs.length,
+    //    validCandidates:
+    //      candidates.length,
 
-        selectedPair: best
-          ? {
-              chainId: best.chainId,
-              dexId: best.dexId,
-              pairAddress:
-                best.pairAddress,
-              baseSymbol:
-                best.baseSymbol,
-              quoteSymbol:
-                best.quoteSymbol,
-              liquidityUsd:
-                best.liquidityUsd,
-              volumeM5:
-                best.volumeM5,
-              buysM5:
-                best.buysM5,
-              sellsM5:
-                best.sellsM5,
-              priceUsd:
-                best.priceUsd
-            }
-          : null
-      },
-      "DexScreener pair selection completed"
-    );
+    //    selectedPair: best
+    //      ? {
+    //          chainId: best.chainId,
+    //          dexId: best.dexId,
+    //          pairAddress:
+    //            best.pairAddress,
+    //          baseSymbol:
+    //            best.baseSymbol,
+    //          quoteSymbol:
+    //            best.quoteSymbol,
+    //          liquidityUsd:
+    //            best.liquidityUsd,
+    //          volumeM5:
+    //            best.volumeM5,
+    //          buysM5:
+    //            best.buysM5,
+    //          sellsM5:
+    //            best.sellsM5,
+    //          priceUsd:
+    //            best.priceUsd
+    //        }
+    //      : null
+    //  },
+    //  "DexScreener pair selection completed"
+    //);
 
     return best;
   }
@@ -627,13 +627,13 @@ export class DexScreenerClient {
         normalizedQuery
       )
     ) {
-      logger.debug(
-        {
-          query,
-          normalizedQuery
-        },
-        "DexScreener lookup skipped"
-      );
+      //logger.debug(
+      //  {
+      //    query,
+      //    normalizedQuery
+      //  },
+      //  "DexScreener lookup skipped"
+      //);
 
       return null;
     }
@@ -655,17 +655,17 @@ export class DexScreenerClient {
         );
 
       if (pair) {
-        logger.info(
-          {
-            query,
-            alias,
-            chainId: pair.chainId,
-            dexId: pair.dexId,
-            pairAddress:
-              pair.pairAddress
-          },
-          "DexScreener pair found by alias"
-        );
+        //logger.info(
+        //  {
+        //    query,
+        //    alias,
+        //    chainId: pair.chainId,
+        //    dexId: pair.dexId,
+        //    pairAddress:
+        //      pair.pairAddress
+        //  },
+        //  "DexScreener pair found by alias"
+        //);
 
         return pair;
       }
@@ -847,14 +847,14 @@ export class DexScreenerClient {
         )
     };
 
-    logger.debug(
-      {
-        chainId,
-        pairAddress,
-        result
-      },
-      "DexScreener pair fetched"
-    );
+    //logger.debug(
+    //  {
+    //    chainId,
+    //    pairAddress,
+    //    result
+    //  },
+    //  "DexScreener pair fetched"
+    //);
 
     return result;
   }
@@ -1029,17 +1029,17 @@ export class DexScreenerClient {
         matched += 1;
       }
 
-      logger.debug(
-        {
-          chainId,
-          requested:
-            chunk.length,
-          received:
-            payload.pairs.length,
-          matched
-        },
-        "DexScreener batch pairs fetched"
-      );
+      //logger.debug(
+      //  {
+      //    chainId,
+      //    requested:
+      //      chunk.length,
+      //    received:
+      //      payload.pairs.length,
+      //    matched
+      //  },
+      //  "DexScreener batch pairs fetched"
+      //);
     }
 
     return result;
