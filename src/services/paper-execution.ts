@@ -58,15 +58,7 @@ const ANCHOR_BREAK_DISTANCE_PCT =
   0.40;
 
 /**
- * Momentum-фильтр перед входом:
- *
- * SHORT:
- *   MEXC вырос на 0.15% за 30 секунд
- *   => вход запрещён.
- *
- * LONG:
- *   MEXC упал на 0.15% за 30 секунд
- *   => вход запрещён.
+ * Momentum-фильтр перед входом.
  */
 const ENTRY_MOMENTUM_WINDOW_MS =
   30 * 1000;
@@ -89,6 +81,31 @@ interface SymbolRiskState {
 interface PriceSample {
   timestamp: number;
   mid: number;
+}
+
+interface EntryDiagnostics {
+  entryCheckedAt: number;
+  entryAnchorAgeMs: number;
+  entryAnchorIsFresh: boolean;
+  entryDexUpdatedAt: number;
+  entryDexPrice: number;
+  entryMexcBid: number;
+  entryMexcAsk: number;
+  entryMexcMid: number;
+  entryMexcBookSpreadPct: number;
+  entrySpreadPct: number;
+  entryNetEdgePct: number;
+  entryDexDriftPct: number;
+  entryDexDirectionalDriftPct: number;
+  entryDexTrendSlopePct: number;
+  entryMomentumPct?: number;
+  entryMomentumBlocked: boolean;
+  entryMomentumWindowMs: number;
+  maxEntrySpreadPct: number;
+  maxEntryAnchorAgeMs: number;
+  anchorBreakDistancePct: number;
+  initialStopDistancePct: number;
+  initialStopPrice: number;
 }
 
 function normalizeSymbol(
@@ -136,12 +153,11 @@ export class PaperExecutionService {
   private readonly symbolRisk =
     new Map<string, SymbolRiskState>();
 
-  /**
-   * История mid-цены MEXC
-   * для momentum-фильтра.
-   */
   private readonly priceHistory =
     new Map<string, PriceSample[]>();
+
+  private readonly entryDiagnostics =
+    new Map<string, EntryDiagnostics>();
 
   private readonly maxOpenTrades = 3;
 
@@ -161,11 +177,8 @@ export class PaperExecutionService {
   }
 
   /**
-   * Записывает каждый входящий MEXC ticker
-   * без открытия или закрытия позиции.
-   *
-   * Этот метод должен вызываться до
-   * spreadEngine.evaluate().
+   * Вызывается на каждом входящем MEXC ticker.
+   * Только сохраняет историю цены.
    */
   recordTicker(
     ticker: MexcTicker
@@ -276,12 +289,8 @@ export class PaperExecutionService {
     timestamp: number
   ): void {
     if (
-      !isFinitePositive(
-        bid
-      ) ||
-      !isFinitePositive(
-        ask
-      ) ||
+      !isFinitePositive(bid) ||
+      !isFinitePositive(ask) ||
       ask < bid
     ) {
       return;
@@ -294,9 +303,7 @@ export class PaperExecutionService {
       ) / 2;
 
     if (
-      !isFinitePositive(
-        mid
-      )
+      !isFinitePositive(mid)
     ) {
       return;
     }
@@ -403,7 +410,7 @@ export class PaperExecutionService {
         reference.mid
       ) ||
       !isFinitePositive(
-        latest.mid
+        latest?.mid
       )
     ) {
       return null;
@@ -701,7 +708,7 @@ export class PaperExecutionService {
       trade.trailBestPrice ??
       currentPrice;
 
-    const stopPrice =
+    const previousStopPrice =
       trade.stopPrice;
 
     if (
@@ -729,14 +736,14 @@ export class PaperExecutionService {
 
       if (
         !isFinitePositive(
-          stopPrice
+          previousStopPrice
         ) ||
         (
           trade.direction === "LONG"
             ? newStopPrice >
-              stopPrice
+              previousStopPrice
             : newStopPrice <
-              stopPrice
+              previousStopPrice
         )
       ) {
         trade.stopPrice =
@@ -766,6 +773,8 @@ export class PaperExecutionService {
 
           distancePct,
 
+          previousStopPrice,
+
           newStopPrice:
             trade.stopPrice
         },
@@ -791,10 +800,10 @@ export class PaperExecutionService {
 
         if (
           !isFinitePositive(
-            stopPrice
+            previousStopPrice
           ) ||
           newStopPrice >
-            stopPrice
+            previousStopPrice
         ) {
           trade.stopPrice =
             round(
@@ -819,10 +828,10 @@ export class PaperExecutionService {
 
       if (
         !isFinitePositive(
-          stopPrice
+          previousStopPrice
         ) ||
         newStopPrice <
-          stopPrice
+          previousStopPrice
       ) {
         trade.stopPrice =
           round(
@@ -897,14 +906,23 @@ export class PaperExecutionService {
           symbol:
             signal.symbol,
 
+          direction:
+            signal.direction,
+
           spreadPct:
             round(
               signal.spreadPct,
-              3
+              4
             ),
 
           maxEntrySpreadPct:
-            MAX_ENTRY_SPREAD_PCT
+            MAX_ENTRY_SPREAD_PCT,
+
+          anchorAgeMs:
+            signal.anchorAgeMs,
+
+          dexUpdatedAt:
+            signal.dexUpdatedAt
         },
         "Signal skipped: entry spread exceeds safety threshold"
       );
@@ -999,6 +1017,7 @@ export class PaperExecutionService {
             signal.direction,
 
           mexcBid,
+
           mexcAsk,
 
           mexcBookSpreadPct:
@@ -1010,14 +1029,27 @@ export class PaperExecutionService {
       return null;
     }
 
-    const momentumPct =
+    const entryMexcMid =
+      (
+        mexcBid +
+        mexcAsk
+      ) / 2;
+
+    const entryMomentumPct =
       this.getMomentumPct(
         positionKey,
         now
       );
 
+    const entryMomentumBlocked =
+      entryMomentumPct !== null &&
+      this.isMomentumAgainstPosition(
+        signal.direction,
+        entryMomentumPct
+      );
+
     if (
-      momentumPct ===
+      entryMomentumPct ===
       null
     ) {
       logger.debug(
@@ -1026,15 +1058,23 @@ export class PaperExecutionService {
             signal.symbol,
 
           direction:
-            signal.direction
+            signal.direction,
+
+          historyWindowMs:
+            ENTRY_MOMENTUM_WINDOW_MS,
+
+          minSampleAgeMs:
+            ENTRY_MOMENTUM_MIN_SAMPLE_AGE_MS,
+
+          historySamples:
+            this.priceHistory.get(
+              positionKey
+            )?.length ?? 0
         },
         "Entry momentum filter skipped: insufficient MEXC price history"
       );
     } else if (
-      this.isMomentumAgainstPosition(
-        signal.direction,
-        momentumPct
-      )
+      entryMomentumBlocked
     ) {
       logger.warn(
         {
@@ -1044,9 +1084,9 @@ export class PaperExecutionService {
           direction:
             signal.direction,
 
-          momentumPct:
+          entryMomentumPct:
             round(
-              momentumPct,
+              entryMomentumPct,
               4
             ),
 
@@ -1262,6 +1302,82 @@ export class PaperExecutionService {
         initialStopDistancePct
       );
 
+    const entryDiagnostics: EntryDiagnostics = {
+      entryCheckedAt:
+        now,
+
+      entryAnchorAgeMs:
+        signal.anchorAgeMs,
+
+      entryAnchorIsFresh:
+        Number.isFinite(
+          signal.anchorAgeMs
+        ) &&
+        signal.anchorAgeMs <=
+          config.maxDexAnchorAgeMs,
+
+      entryDexUpdatedAt:
+        signal.dexUpdatedAt,
+
+      entryDexPrice:
+        signal.dexPrice,
+
+      entryMexcBid:
+        mexcBid,
+
+      entryMexcAsk:
+        mexcAsk,
+
+      entryMexcMid:
+        entryMexcMid,
+
+      entryMexcBookSpreadPct:
+        signal.mexcBookSpreadPct,
+
+      entrySpreadPct:
+        signal.spreadPct,
+
+      entryNetEdgePct:
+        signal.netEdgePct,
+
+      entryDexDriftPct:
+        signal.dexDriftPct,
+
+      entryDexDirectionalDriftPct:
+        signal.dexDirectionalDriftPct,
+
+      entryDexTrendSlopePct:
+        signal.dexTrendSlopePct ??
+        0,
+
+      entryMomentumPct:
+        entryMomentumPct ===
+          null
+          ? undefined
+          : entryMomentumPct,
+
+      entryMomentumBlocked:
+        entryMomentumBlocked,
+
+      entryMomentumWindowMs:
+        ENTRY_MOMENTUM_WINDOW_MS,
+
+      maxEntrySpreadPct:
+        MAX_ENTRY_SPREAD_PCT,
+
+      maxEntryAnchorAgeMs:
+        config.maxDexAnchorAgeMs,
+
+      anchorBreakDistancePct:
+        ANCHOR_BREAK_DISTANCE_PCT,
+
+      initialStopDistancePct:
+        initialStopDistancePct,
+
+      initialStopPrice:
+        stopPrice
+    };
+
     const trade: PaperTrade = {
       id:
         crypto.randomUUID(),
@@ -1276,7 +1392,9 @@ export class PaperExecutionService {
         "OPEN",
 
       openedAt:
-        new Date().toISOString(),
+        new Date(
+          now
+        ).toISOString(),
 
       entryPrice:
         round(
@@ -1373,6 +1491,11 @@ export class PaperExecutionService {
       )
     );
 
+    this.entryDiagnostics.set(
+      trade.id,
+      entryDiagnostics
+    );
+
     logger.warn(
       {
         id:
@@ -1384,17 +1507,10 @@ export class PaperExecutionService {
         direction:
           trade.direction,
 
+        ...entryDiagnostics,
+
         entryPrice:
           trade.entryPrice,
-
-        entryMexcBid:
-          trade.entryMexcBid,
-
-        entryMexcAsk:
-          trade.entryMexcAsk,
-
-        entryMexcBookSpreadPct:
-          trade.entryMexcBookSpreadPct,
 
         qtyUsd:
           trade.qtyUsd,
@@ -1405,44 +1521,11 @@ export class PaperExecutionService {
         depositAtEntry:
           trade.depositAtEntry,
 
-        allocationPct:
-          trade.allocationPct,
-
         dexAnchorAtEntry:
           trade.dexAnchorAtEntry,
 
-        entrySpreadPct:
-          trade.entrySpreadPct,
-
         stopPrice:
           trade.stopPrice,
-
-        stopDistancePct:
-          trade.stopDistancePct,
-
-        initialStopDurationMs:
-          INITIAL_STOP_DURATION_MS,
-
-        initialStopDistancePct:
-          INITIAL_STOP_DISTANCE_PCT,
-
-        regularStopDistancePct:
-          REGULAR_STOP_DISTANCE_PCT,
-
-        anchorBreakDistancePct:
-          ANCHOR_BREAK_DISTANCE_PCT,
-
-        entryMomentumPct:
-          momentumPct ===
-          null
-            ? undefined
-            : round(
-                momentumPct,
-                4
-              ),
-
-        entryMomentumBlockPct:
-          ENTRY_MOMENTUM_BLOCK_PCT,
 
         trailTriggerPct:
           trade.trailTriggerPct,
@@ -1479,12 +1562,7 @@ export class PaperExecutionService {
       );
 
     if (
-      !trade
-    ) {
-      return null;
-    }
-
-    if (
+      !trade ||
       this.processedCloseTrades.has(
         trade.id
       )
@@ -1506,6 +1584,9 @@ export class PaperExecutionService {
         now - openedAt
       );
 
+    const previousStopPrice =
+      trade.stopPrice;
+
     const previousStopDistancePct =
       trade.stopDistancePct;
 
@@ -1513,35 +1594,6 @@ export class PaperExecutionService {
       trade,
       holdMs
     );
-
-    if (
-      previousStopDistancePct !==
-      trade.stopDistancePct
-    ) {
-      logger.debug(
-        {
-          tradeId:
-            trade.id,
-
-          symbol:
-            trade.symbol,
-
-          direction:
-            trade.direction,
-
-          holdMs,
-
-          previousStopDistancePct,
-
-          currentStopDistancePct:
-            trade.stopDistancePct,
-
-          stopPrice:
-            trade.stopPrice
-        },
-        "Two-phase stop updated"
-      );
-    }
 
     const exitBid =
       Number(
@@ -1602,6 +1654,16 @@ export class PaperExecutionService {
       trade.direction === "LONG"
         ? exitBid
         : exitAsk;
+
+    const marketGrossPnlPct =
+      this.calculateGrossPnlPct(
+        trade,
+        marketExitPrice
+      );
+
+    const marketNetPnlPct =
+      marketGrossPnlPct -
+      this.getTotalCostsPct();
 
     this.updateTrailingStop(
       trade,
@@ -1829,32 +1891,6 @@ export class PaperExecutionService {
 
       exitPrice =
         marketExitPrice;
-
-      logger.warn(
-        {
-          tradeId:
-            trade.id,
-
-          symbol:
-            trade.symbol,
-
-          direction:
-            trade.direction,
-
-          dexAnchorAtEntry:
-            trade.dexAnchorAtEntry,
-
-          currentDexPrice,
-
-          dexMoveFromEntryPct,
-
-          anchorBreakDistancePct:
-            ANCHOR_BREAK_DISTANCE_PCT,
-
-          marketExitPrice
-        },
-        "Closing trade: DEX anchor moved against thesis"
-      );
     } else if (
       stopTriggered
     ) {
@@ -1876,50 +1912,12 @@ export class PaperExecutionService {
       minHoldReached &&
       spreadExitReached
     ) {
-      const grossPnlPctAtMarket =
-        this.calculateGrossPnlPct(
-          trade,
-          marketExitPrice
-        );
-
-      const netPnlPctAtMarket =
-        grossPnlPctAtMarket -
-        this.getTotalCostsPct();
-
       if (
-        netPnlPctAtMarket >=
+        marketNetPnlPct >=
         MIN_NET_PROFIT_PCT
       ) {
         closeReason =
           "mean_reverted_profit";
-
-        logger.debug(
-          {
-            tradeId:
-              trade.id,
-
-            symbol:
-              trade.symbol,
-
-            currentSpreadPct,
-
-            grossPnlPct:
-              round(
-                grossPnlPctAtMarket,
-                4
-              ),
-
-            netPnlPct:
-              round(
-                netPnlPctAtMarket,
-                4
-              ),
-
-            minNetProfitPct:
-              MIN_NET_PROFIT_PCT
-          },
-          "Minimum net profit reached"
-        );
       }
     } else if (
       minHoldReached &&
@@ -1974,18 +1972,10 @@ export class PaperExecutionService {
       100;
 
     if (
-      !Number.isFinite(
-        grossPnlPct
-      ) ||
-      !Number.isFinite(
-        netPnlPct
-      ) ||
-      !Number.isFinite(
-        grossPnlUsd
-      ) ||
-      !Number.isFinite(
-        netPnlUsd
-      )
+      !Number.isFinite(grossPnlPct) ||
+      !Number.isFinite(netPnlPct) ||
+      !Number.isFinite(grossPnlUsd) ||
+      !Number.isFinite(netPnlUsd)
     ) {
       this.processedCloseTrades.delete(
         trade.id
@@ -2018,6 +2008,10 @@ export class PaperExecutionService {
         positionKey
       );
 
+    /**
+     * Кулдаун применяется только после stop_loss.
+     * anchor_broken здесь специально отсутствует.
+     */
     if (
       closeReason ===
       "stop_loss"
@@ -2083,9 +2077,14 @@ export class PaperExecutionService {
         0,
         round(
           depositBeforeClose +
-            netPnlUsd,
+          netPnlUsd,
           4
         )
+      );
+
+    const entryInfo =
+      this.entryDiagnostics.get(
+        trade.id
       );
 
     const closedTrade: PaperTrade = {
@@ -2202,9 +2201,13 @@ export class PaperExecutionService {
       positionKey
     );
 
+    this.entryDiagnostics.delete(
+      trade.id
+    );
+
     logger.warn(
       {
-        id:
+        tradeId:
           closedTrade.id,
 
         symbol:
@@ -2213,85 +2216,150 @@ export class PaperExecutionService {
         direction:
           closedTrade.direction,
 
-        entryPrice:
-          closedTrade.entryPrice,
+        closeReason,
 
-        entryMexcBid:
-          closedTrade.entryMexcBid,
+        holdMs,
 
-        entryMexcAsk:
-          closedTrade.entryMexcAsk,
+        entry:
+          entryInfo,
 
-        exitPrice:
-          closedTrade.exitPrice,
+        exit: {
+          exitPrice:
+            closedTrade.exitPrice,
 
-        marketExitPrice:
-          closedTrade.marketExitPrice,
+          marketExitPrice:
+            closedTrade.marketExitPrice,
 
-        stopPrice:
-          closedTrade.stopPrice,
+          exitMexcBid:
+            closedTrade.exitMexcBid,
 
-        stopDistancePct:
-          closedTrade.stopDistancePct,
+          exitMexcAsk:
+            closedTrade.exitMexcAsk,
 
-        stopTriggerPrice:
-          closedTrade.stopTriggerPrice,
+          exitMexcBookSpreadPct:
+            closedTrade.exitMexcBookSpreadPct,
 
-        exitMexcBid:
-          closedTrade.exitMexcBid,
+          currentDexPrice,
 
-        exitMexcAsk:
-          closedTrade.exitMexcAsk,
+          dexAnchorAtEntry:
+            closedTrade.dexAnchorAtEntry,
 
-        grossPnlPct:
-          closedTrade.grossPnlPct,
+          dexAnchorAtExit:
+            closedTrade.dexAnchorAtExit,
 
-        netPnlPct:
-          closedTrade.netPnlPct,
+          dexMoveFromEntryPct,
 
-        grossPnlUsd:
-          closedTrade.grossPnlUsd,
+          currentSpreadPct,
 
-        netPnlUsd:
-          closedTrade.netPnlUsd,
+          anchorAgeMs:
+            anchor?.anchorAgeMs,
 
-        depositAtEntry:
-          closedTrade.depositAtEntry,
+          anchorIsFresh,
+
+          stopPrice:
+            closedTrade.stopPrice,
+
+          stopDistancePct:
+            closedTrade.stopDistancePct,
+
+          stopTriggerPrice:
+            closedTrade.stopTriggerPrice,
+
+          previousStopPrice,
+
+          stopPriceChanged:
+            previousStopPrice !==
+            closedTrade.stopPrice,
+
+          previousStopDistancePct,
+
+          currentStopDistancePct:
+            closedTrade.stopDistancePct,
+
+          trailActive:
+            closedTrade.trailActive,
+
+          trailBestPrice:
+            closedTrade.trailBestPrice,
+
+          marketGrossPnlPct:
+            round(
+              marketGrossPnlPct,
+              4
+            ),
+
+          marketNetPnlPct:
+            round(
+              marketNetPnlPct,
+              4
+            )
+        },
+
+        pnl: {
+          grossPnlPct:
+            closedTrade.grossPnlPct,
+
+          netPnlPct:
+            closedTrade.netPnlPct,
+
+          grossPnlUsd:
+            closedTrade.grossPnlUsd,
+
+          netPnlUsd:
+            closedTrade.netPnlUsd,
+
+          totalCostsPct
+        },
+
+        risk: {
+          consecutiveStops:
+            riskState.consecutiveStops,
+
+          cooldownUntil:
+            new Date(
+              riskState.cooldownUntil
+            ).toISOString(),
+
+          bannedUntil:
+            riskState.bannedUntil > now
+              ? new Date(
+                  riskState.bannedUntil
+                ).toISOString()
+              : undefined
+        },
 
         depositBeforeClose,
 
         depositAfterClose,
 
-        holdMs,
+        configuration: {
+          maxEntrySpreadPct:
+            MAX_ENTRY_SPREAD_PCT,
 
-        currentSpreadPct,
+          maxDexAnchorAgeMs:
+            config.maxDexAnchorAgeMs,
 
-        dexAnchorAtEntry:
-          closedTrade.dexAnchorAtEntry,
+          anchorBreakDistancePct:
+            ANCHOR_BREAK_DISTANCE_PCT,
 
-        dexAnchorAtExit:
-          closedTrade.dexAnchorAtExit,
+          initialStopDurationMs:
+            INITIAL_STOP_DURATION_MS,
 
-        dexMoveFromEntryPct,
+          initialStopDistancePct:
+            INITIAL_STOP_DISTANCE_PCT,
 
-        anchorBreakDistancePct:
-          ANCHOR_BREAK_DISTANCE_PCT,
+          regularStopDistancePct:
+            REGULAR_STOP_DISTANCE_PCT,
 
-        anchorAgeMs:
-          anchor?.anchorAgeMs,
+          entryMomentumWindowMs:
+            ENTRY_MOMENTUM_WINDOW_MS,
 
-        anchorIsFresh,
+          entryMomentumBlockPct:
+            ENTRY_MOMENTUM_BLOCK_PCT,
 
-        closeReason,
-
-        minNetProfitPct:
-          MIN_NET_PROFIT_PCT,
-
-        trailActive:
-          closedTrade.trailActive,
-
-        trailBestPrice:
-          closedTrade.trailBestPrice
+          minNetProfitPct:
+            MIN_NET_PROFIT_PCT
+        }
       },
       "PAPER TRADE CLOSED"
     );
