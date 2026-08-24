@@ -60,31 +60,31 @@ export class ContractWatcher {
         if (!this.initialized) {
           this.initialized = true;
 
-          logger.info(
-            { contracts: this.knownSymbols.size },
-            "Initial MEXC contracts snapshot loaded"
-          );
+          //logger.info(
+          //  { contracts: this.knownSymbols.size },
+          //  "Initial MEXC contracts snapshot loaded"
+          //);
 
           const startupCandidates = contracts
             .slice(-config.startupBackfillLimit)
             .reverse();
 
-          logger.info(
-            {
-              count: startupCandidates.length,
-              lookbackHours: config.contractLookbackHours
-            },
-            "Running startup rolling-window backfill"
-          );
+          //logger.info(
+          //  {
+          //    count: startupCandidates.length,
+          //    lookbackHours: config.contractLookbackHours
+          //  },
+          //  "Running startup rolling-window backfill"
+          //);
 
           for (const contract of startupCandidates) {
             await this.processContractIfDue(contract, true);
           }
 
-          logger.info(
-            { processed: startupCandidates.length },
-            "Startup rolling-window backfill completed"
-          );
+          //logger.info(
+          //  { processed: startupCandidates.length },
+          //  "Startup rolling-window backfill completed"
+          //);
 
           break;
         }
@@ -167,15 +167,15 @@ export class ContractWatcher {
         "New MEXC futures contract detected"
       );
     } else {
-      logger.info(
-        {
-          symbol: contract.symbol,
-          ageHours: Number(ageHours.toFixed(2)),
-          checksCount: state.checksCount,
-          recheckMs
-        },
-        "Rechecking MEXC contract inside rolling window"
-      );
+      //logger.info(
+      //  {
+      //    symbol: contract.symbol,
+      //    ageHours: Number(ageHours.toFixed(2)),
+      //    checksCount: state.checksCount,
+      //    recheckMs
+      //  },
+      //  "Rechecking MEXC contract inside rolling window"
+      //);
     }
 
     try {
