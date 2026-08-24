@@ -158,14 +158,14 @@ export class ContractWatcher {
     state.checksCount += 1;
 
     if (isNewlySeen && !forceInitialScan) {
-      logger.warn(
-        {
-          symbol: contract.symbol,
-          displayName: contract.displayName,
-          baseCoin: contract.baseCoin
-        },
-        "New MEXC futures contract detected"
-      );
+      //logger.warn(
+      //  {
+      //    symbol: contract.symbol,
+      //    displayName: contract.displayName,
+      //    baseCoin: contract.baseCoin
+      //  },
+      //  "New MEXC futures contract detected"
+      //);
     } else {
       //logger.info(
       //  {
