@@ -226,19 +226,19 @@ export class SpreadEngine {
     if (
       !this.isValidDexPair(pair)
     ) {
-      logger.warn(
-        {
-          symbol,
-          snapshotKey,
-          priceUsd:
-            pair.priceUsd,
-          liquidityUsd:
-            pair.liquidityUsd,
-          volumeM5:
-            pair.volumeM5
-        },
-        "Invalid DEX pair snapshot, skipping"
-      );
+      //logger.warn(
+      //  {
+      //    symbol,
+      //    snapshotKey,
+      //    priceUsd:
+      //      pair.priceUsd,
+      //    liquidityUsd:
+      //      pair.liquidityUsd,
+      //    volumeM5:
+      //      pair.volumeM5
+      //  },
+      //  "Invalid DEX pair snapshot, skipping"
+      //);
 
       return false;
     }
@@ -257,17 +257,17 @@ export class SpreadEngine {
         normalizedDexPrice
       )
     ) {
-      logger.warn(
-        {
-          symbol,
-          snapshotKey,
-          rawDexPrice:
-            pair.priceUsd,
-          contractMultiplier,
-          normalizedDexPrice
-        },
-        "Invalid normalized DEX price, skipping"
-      );
+      //logger.warn(
+      //  {
+      //    symbol,
+      //    snapshotKey,
+      //    rawDexPrice:
+      //      pair.priceUsd,
+      //    contractMultiplier,
+      //    normalizedDexPrice
+      //  },
+      //  "Invalid normalized DEX price, skipping"
+      //);
 
       return false;
     }
@@ -304,36 +304,36 @@ export class SpreadEngine {
           item.ts >= cutoff
       );
 
-    logger.info(
-      {
-        symbol,
-        snapshotKey,
+    //logger.info(
+    //  {
+    //    symbol,
+    //    snapshotKey,
 
-        rawPrice:
-          pair.priceUsd,
+    //    rawPrice:
+    //      pair.priceUsd,
 
-        normalizedPrice:
-          normalizedDexPrice,
+    //    normalizedPrice:
+    //      normalizedDexPrice,
 
-        contractMultiplier,
+    //    contractMultiplier,
 
-        liquidity:
-          pair.liquidityUsd.toFixed(0),
+    //    liquidity:
+    //      pair.liquidityUsd.toFixed(0),
 
-        volumeM5:
-          pair.volumeM5.toFixed(0),
+    //    volumeM5:
+    //      pair.volumeM5.toFixed(0),
 
-        buysM5:
-          pair.buysM5,
+    //    buysM5:
+    //      pair.buysM5,
 
-        sellsM5:
-          pair.sellsM5,
+    //    sellsM5:
+    //      pair.sellsM5,
 
-        historySize:
-          state.dexHistory.length
-      },
-      "DEX snapshot saved"
-    );
+    //    historySize:
+    //      state.dexHistory.length
+    //  },
+    //  "DEX snapshot saved"
+    //);
 
     return true;
   }
@@ -358,15 +358,15 @@ export class SpreadEngine {
       !mapping ||
       mapping.status !== "active"
     ) {
-      logger.debug(
-        {
-          tickerSymbol,
-          mappingStatus:
-            mapping?.status,
-          snapshotKey
-        },
-        "No active DEX mapping"
-      );
+      //logger.debug(
+      //  {
+      //    tickerSymbol,
+      //    mappingStatus:
+      //      mapping?.status,
+      //    snapshotKey
+      //  },
+      //  "No active DEX mapping"
+      //);
 
       return null;
     }
@@ -383,19 +383,19 @@ export class SpreadEngine {
     if (
       !this.isValidDexPair(anchor)
     ) {
-      logger.warn(
-        {
-          tickerSymbol,
-          snapshotKey,
-          priceUsd:
-            anchor.priceUsd,
-          liquidityUsd:
-            anchor.liquidityUsd,
-          volumeM5:
-            anchor.volumeM5
-        },
-        "Invalid DEX snapshot"
-      );
+      //logger.warn(
+      //  {
+      //    tickerSymbol,
+      //    snapshotKey,
+      //    priceUsd:
+      //      anchor.priceUsd,
+      //    liquidityUsd:
+      //      anchor.liquidityUsd,
+      //    volumeM5:
+      //      anchor.volumeM5
+      //  },
+      //  "Invalid DEX snapshot"
+      //);
 
       return null;
     }
@@ -431,14 +431,14 @@ export class SpreadEngine {
     if (
       mexcAsk < mexcBid
     ) {
-      logger.warn(
-        {
-          tickerSymbol,
-          mexcBid,
-          mexcAsk
-        },
-        "Crossed MEXC book"
-      );
+      //logger.warn(
+      //  {
+      //    tickerSymbol,
+      //    mexcBid,
+      //    mexcAsk
+      //  },
+      //  "Crossed MEXC book"
+      //);
 
       return null;
     }
@@ -489,17 +489,17 @@ export class SpreadEngine {
           mexcMid
         );
 
-      logger.debug(
-        {
-          symbol: tickerSymbol,
-          dexPrice,
-          mexcMid,
-          deviationPct,
-          maxDeviationPct:
-            config.maxPriceDeviationPct
-        },
-        "DEX anchor deviation too high"
-      );
+      //logger.debug(
+      //  {
+      //    symbol: tickerSymbol,
+      //    dexPrice,
+      //    mexcMid,
+      //    deviationPct,
+      //    maxDeviationPct:
+      //      config.maxPriceDeviationPct
+      //  },
+      //  "DEX anchor deviation too high"
+      //);
 
       return null;
     }
@@ -614,19 +614,19 @@ export class SpreadEngine {
       state.mexcHistory.length <
       MIN_HISTORY_POINTS
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          mexcHistorySize:
-            state.mexcHistory.length,
+      //    mexcHistorySize:
+      //      state.mexcHistory.length,
 
-          minimum:
-            MIN_HISTORY_POINTS
-        },
-        "MEXC history is not ready"
-      );
+      //    minimum:
+      //      MIN_HISTORY_POINTS
+      //  },
+      //  "MEXC history is not ready"
+      //);
 
       return null;
     }
@@ -635,19 +635,19 @@ export class SpreadEngine {
       status.anchorAgeMs >
       config.maxDexAnchorAgeMs
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          anchorAgeMs:
-            status.anchorAgeMs,
+      //    anchorAgeMs:
+      //      status.anchorAgeMs,
 
-          maxAge:
-            config.maxDexAnchorAgeMs
-        },
-        "DEX anchor is stale"
-      );
+      //    maxAge:
+      //      config.maxDexAnchorAgeMs
+      //  },
+      //  "DEX anchor is stale"
+      //);
 
       return null;
     }
@@ -672,22 +672,22 @@ export class SpreadEngine {
       status.dexSellsM5 <
         config.minDexBuysSellsM5
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          buysM5:
-            status.dexBuysM5,
+      //    buysM5:
+      //      status.dexBuysM5,
 
-          sellsM5:
-            status.dexSellsM5,
+      //    sellsM5:
+      //      status.dexSellsM5,
 
-          minimum:
-            config.minDexBuysSellsM5
-        },
-        "DEX buys/sells activity too low"
-      );
+      //    minimum:
+      //      config.minDexBuysSellsM5
+      //  },
+      //  "DEX buys/sells activity too low"
+      //);
 
       return null;
     }
@@ -784,23 +784,23 @@ export class SpreadEngine {
       longBlocked &&
       shortBlocked
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          mexcDirectionalDriftPct,
+      //    mexcDirectionalDriftPct,
 
-          dexDirectionalDriftPct:
-            status.dexDirectionalDriftPct,
+      //    dexDirectionalDriftPct:
+      //      status.dexDirectionalDriftPct,
 
-          dexTrendSlopePct,
+      //    dexTrendSlopePct,
 
-          longBlocked,
-          shortBlocked
-        },
-        "Both directions blocked by trend filters"
-      );
+      //    longBlocked,
+      //    shortBlocked
+      //  },
+      //  "Both directions blocked by trend filters"
+      //);
 
       return null;
     }
@@ -853,27 +853,27 @@ export class SpreadEngine {
       return null;
     }
 
-    logger.debug(
-      {
-        symbol:
-          ticker.symbol,
+    //logger.debug(
+    //  {
+    //    symbol:
+    //      ticker.symbol,
 
-        direction,
+    //    direction,
 
-        mexcDirectionalDriftPct,
+    //    mexcDirectionalDriftPct,
 
-        dexDirectionalDriftPct:
-          status.dexDirectionalDriftPct,
+    //    dexDirectionalDriftPct:
+    //      status.dexDirectionalDriftPct,
 
-        dexTrendSlopePct,
+    //    dexTrendSlopePct,
 
-        longBlocked,
-        shortBlocked,
+    //    longBlocked,
+    //    shortBlocked,
 
-        spreadPct
-      },
-      "MEXC trend filter"
-    );
+    //    spreadPct
+    //  },
+    //  "MEXC trend filter"
+    //);
 
     const directionLastSignalAt =
       direction === "LONG"
@@ -894,16 +894,16 @@ export class SpreadEngine {
       status.dexDirectionalDriftPct <
         -config.maxDexDriftPct
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          directionalDriftPct:
-            status.dexDirectionalDriftPct
-        },
-        "LONG skipped: DEX anchor moving down"
-      );
+      //    directionalDriftPct:
+      //      status.dexDirectionalDriftPct
+      //  },
+      //  "LONG skipped: DEX anchor moving down"
+      //);
 
       return null;
     }
@@ -913,16 +913,16 @@ export class SpreadEngine {
       status.dexDirectionalDriftPct >
         config.maxDexDriftPct
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          directionalDriftPct:
-            status.dexDirectionalDriftPct
-        },
-        "SHORT skipped: DEX anchor moving up"
-      );
+      //    directionalDriftPct:
+      //      status.dexDirectionalDriftPct
+      //  },
+      //  "SHORT skipped: DEX anchor moving up"
+      //);
 
       return null;
     }
@@ -931,16 +931,16 @@ export class SpreadEngine {
       state.lastConfirmedDexUpdatedAt ===
       status.dexUpdatedAt
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          dexUpdatedAt:
-            status.dexUpdatedAt
-        },
-        "Duplicate DEX snapshot"
-      );
+      //    dexUpdatedAt:
+      //      status.dexUpdatedAt
+      //  },
+      //  "Duplicate DEX snapshot"
+      //);
 
       return null;
     }
@@ -1006,24 +1006,24 @@ export class SpreadEngine {
       netEdgePct <
         config.minNetEdgePct
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          direction,
+      //    direction,
 
-          spreadPct,
+      //    spreadPct,
 
-          totalCostsPct,
+      //    totalCostsPct,
 
-          netEdgePct,
+      //    netEdgePct,
 
-          minNetEdge:
-            config.minNetEdgePct
-        },
-        "Net edge too low"
-      );
+      //    minNetEdge:
+      //      config.minNetEdgePct
+      //  },
+      //  "Net edge too low"
+      //);
 
       return null;
     }
