@@ -53,15 +53,9 @@ function shouldSkipDexLookup(
     return true;
   }
 
-  if (
-    /(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(
-      base
-    )
-  ) {
-    return true;
-  }
-
-  return false;
+  return /(NAS100|SPX|DJI|NVIDIA|TESLA|APPLE|MSFT|SBUX|ARM|HD|COPPER)/.test(
+    base
+  );
 }
 
 function getContractMultiplier(
@@ -152,12 +146,37 @@ async function bootstrap(): Promise<void> {
     "dexAnchorAtExit",
     "dexSnapshotAtEntry",
     "dexSnapshotAtExit",
+
+    "entryAnchorAgeMs",
+    "entryAnchorIsFresh",
+    "entryMomentumPct",
+    "entryMomentumBlocked",
+    "entryMexcMid",
+    "entryNetEdgePct",
+    "entryDexDriftPct",
+    "entryDexDirectionalDriftPct",
+    "entryDexTrendSlopePct",
+    "maxEntryMexcBookSpreadPct",
+    "maxAnchorBreakLossPct",
+
     "entrySpreadPct",
     "exitSpreadPct",
     "grossPnlPct",
     "netPnlPct",
     "grossPnlUsd",
     "netPnlUsd",
+
+    "marketExitPrice",
+    "marketGrossPnlPct",
+    "marketNetPnlPct",
+    "anchorAgeMsAtExit",
+    "anchorIsFreshAtExit",
+    "dexMoveFromEntryPct",
+    "anchorBroken",
+    "anchorLossTriggered",
+    "stopPriceAtExit",
+    "stopDistancePctAtExit",
+
     "holdMs",
     "openReason",
     "closeReason"
@@ -222,9 +241,7 @@ async function bootstrap(): Promise<void> {
   logger.info(
     {
       initialDepositUsd: 100,
-
       maxOpenTrades: 3,
-
       tradeAllocationPct: 0.3,
 
       currentDepositUsd:
@@ -256,6 +273,12 @@ async function bootstrap(): Promise<void> {
 
       minMexcTurnover24h:
         config.minMexcTurnover24h,
+
+      maxMexcBookSpreadPct:
+        config.maxMexcBookSpreadPct,
+
+      maxDexAnchorAgeMs:
+        config.maxDexAnchorAgeMs,
 
       paperExitSpreadPct:
         config.paperExitSpreadPct,
@@ -322,8 +345,8 @@ async function bootstrap(): Promise<void> {
       );
 
     if (
-      existing &&
-      existing.status === "active"
+      existing?.status ===
+      "active"
     ) {
       return;
     }
@@ -354,23 +377,21 @@ async function bootstrap(): Promise<void> {
     }
 
     if (
-      existing &&
-      existing.status === "not_found"
+      existing?.status ===
+      "not_found"
     ) {
       return;
     }
 
     const searchQuery =
       contract.baseCoin?.trim() ||
-      contract.symbol
-        .split("_")[0] ||
+      contract.symbol.split("_")[0] ||
       contract.symbol;
 
     const pair =
-      await dexScreenerClient
-        .findBestPairAcrossChains(
-          searchQuery
-        );
+      await dexScreenerClient.findBestPairAcrossChains(
+        searchQuery
+      );
 
     if (
       !pair
@@ -599,24 +620,24 @@ async function bootstrap(): Promise<void> {
 
         if (
           !mapping ||
-          mapping.status !== "active"
+          mapping.status !==
+            "active"
         ) {
           return;
         }
 
         /**
-         * Важно:
-         * записываем каждый тикер до проверки
-         * нового торгового сигнала.
-         *
-         * Метод только обновляет историю MEXC
-         * и не открывает/закрывает сделки.
+         * История MEXC обновляется
+         * до evaluate() и onSignal().
          */
         paperExecution.recordTicker(
           ticker
         );
 
-        let openedNow = false;
+        const anchorStatus =
+          spreadEngine.getAnchorStatus(
+            ticker
+          );
 
         const signal =
           spreadEngine.evaluate(
@@ -656,6 +677,24 @@ async function bootstrap(): Promise<void> {
               mexcAsk:
                 signal.mexcAsk,
 
+              mexcBookSpreadPct:
+                signal.mexcBookSpreadPct,
+
+              anchorAgeMs:
+                signal.anchorAgeMs,
+
+              dexUpdatedAt:
+                signal.dexUpdatedAt,
+
+              dexDriftPct:
+                signal.dexDriftPct,
+
+              dexDirectionalDriftPct:
+                signal.dexDirectionalDriftPct,
+
+              dexTrendSlopePct:
+                signal.dexTrendSlopePct,
+
               entryRef:
                 signal.entryRef,
 
@@ -678,10 +717,9 @@ async function bootstrap(): Promise<void> {
 
           if (
             opened &&
-            opened.action === "OPEN"
+            opened.action ===
+              "OPEN"
           ) {
-            openedNow = true;
-
             await paperTradesWriter.appendRow({
               event:
                 "OPEN",
@@ -734,6 +772,39 @@ async function bootstrap(): Promise<void> {
               dexSnapshotAtEntry:
                 opened.trade.dexSnapshotAtEntry,
 
+              entryAnchorAgeMs:
+                opened.trade.entryAnchorAgeMs,
+
+              entryAnchorIsFresh:
+                opened.trade.entryAnchorIsFresh,
+
+              entryMomentumPct:
+                opened.trade.entryMomentumPct,
+
+              entryMomentumBlocked:
+                opened.trade.entryMomentumBlocked,
+
+              entryMexcMid:
+                opened.trade.entryMexcMid,
+
+              entryNetEdgePct:
+                opened.trade.entryNetEdgePct,
+
+              entryDexDriftPct:
+                opened.trade.entryDexDriftPct,
+
+              entryDexDirectionalDriftPct:
+                opened.trade.entryDexDirectionalDriftPct,
+
+              entryDexTrendSlopePct:
+                opened.trade.entryDexTrendSlopePct,
+
+              maxEntryMexcBookSpreadPct:
+                opened.trade.maxEntryMexcBookSpreadPct,
+
+              maxAnchorBreakLossPct:
+                opened.trade.maxAnchorBreakLossPct,
+
               entrySpreadPct:
                 opened.trade.entrySpreadPct,
 
@@ -768,17 +839,17 @@ async function bootstrap(): Promise<void> {
                 entryMexcBookSpreadPct:
                   opened.trade.entryMexcBookSpreadPct,
 
+                entryAnchorAgeMs:
+                  opened.trade.entryAnchorAgeMs,
+
+                entryMomentumPct:
+                  opened.trade.entryMomentumPct,
+
                 qtyUsd:
                   opened.trade.qtyUsd,
 
-                qtyToken:
-                  opened.trade.qtyToken,
-
                 depositAtEntry:
                   opened.trade.depositAtEntry,
-
-                allocationPct:
-                  opened.trade.allocationPct,
 
                 currentDepositUsd:
                   paperExecution.getDepositUsd(),
@@ -792,20 +863,8 @@ async function bootstrap(): Promise<void> {
         }
 
         /**
-         * На тикере, где только что открыли сделку,
-         * повторно onTicker не вызываем.
+         * Сопровождаем уже открытую позицию.
          */
-        if (
-          openedNow
-        ) {
-          return;
-        }
-
-        const anchorStatus =
-          spreadEngine.getAnchorStatus(
-            ticker
-          );
-
         const closed =
           paperExecution.onTicker(
             ticker,
@@ -814,7 +873,8 @@ async function bootstrap(): Promise<void> {
 
         if (
           !closed ||
-          closed.action !== "CLOSE"
+          closed.action !==
+            "CLOSE"
         ) {
           return;
         }
@@ -898,6 +958,39 @@ async function bootstrap(): Promise<void> {
           dexSnapshotAtExit:
             closed.trade.dexSnapshotAtExit,
 
+          entryAnchorAgeMs:
+            closed.trade.entryAnchorAgeMs,
+
+          entryAnchorIsFresh:
+            closed.trade.entryAnchorIsFresh,
+
+          entryMomentumPct:
+            closed.trade.entryMomentumPct,
+
+          entryMomentumBlocked:
+            closed.trade.entryMomentumBlocked,
+
+          entryMexcMid:
+            closed.trade.entryMexcMid,
+
+          entryNetEdgePct:
+            closed.trade.entryNetEdgePct,
+
+          entryDexDriftPct:
+            closed.trade.entryDexDriftPct,
+
+          entryDexDirectionalDriftPct:
+            closed.trade.entryDexDirectionalDriftPct,
+
+          entryDexTrendSlopePct:
+            closed.trade.entryDexTrendSlopePct,
+
+          maxEntryMexcBookSpreadPct:
+            closed.trade.maxEntryMexcBookSpreadPct,
+
+          maxAnchorBreakLossPct:
+            closed.trade.maxAnchorBreakLossPct,
+
           entrySpreadPct:
             closed.trade.entrySpreadPct,
 
@@ -915,6 +1008,36 @@ async function bootstrap(): Promise<void> {
 
           netPnlUsd:
             closed.trade.netPnlUsd,
+
+          marketExitPrice:
+            closed.trade.marketExitPrice,
+
+          marketGrossPnlPct:
+            closed.trade.marketGrossPnlPct,
+
+          marketNetPnlPct:
+            closed.trade.marketNetPnlPct,
+
+          anchorAgeMsAtExit:
+            closed.trade.anchorAgeMsAtExit,
+
+          anchorIsFreshAtExit:
+            closed.trade.anchorIsFreshAtExit,
+
+          dexMoveFromEntryPct:
+            closed.trade.dexMoveFromEntryPct,
+
+          anchorBroken:
+            closed.trade.anchorBroken,
+
+          anchorLossTriggered:
+            closed.trade.anchorLossTriggered,
+
+          stopPriceAtExit:
+            closed.trade.stopPriceAtExit,
+
+          stopDistancePctAtExit:
+            closed.trade.stopDistancePctAtExit,
 
           holdMs:
             closed.trade.holdMs,
@@ -944,53 +1067,32 @@ async function bootstrap(): Promise<void> {
             entryPrice:
               closed.trade.entryPrice,
 
-            entryMexcBid:
-              closed.trade.entryMexcBid,
-
-            entryMexcAsk:
-              closed.trade.entryMexcAsk,
-
-            entryMexcBookSpreadPct:
-              closed.trade.entryMexcBookSpreadPct,
-
             exitPrice:
               closed.trade.exitPrice,
 
-            exitMexcBid:
-              closed.trade.exitMexcBid,
-
-            exitMexcAsk:
-              closed.trade.exitMexcAsk,
-
-            exitMexcBookSpreadPct:
-              closed.trade.exitMexcBookSpreadPct,
-
-            grossPnlPct:
-              closed.trade.grossPnlPct,
+            closeReason:
+              closed.trade.closeReason,
 
             netPnlPct:
               closed.trade.netPnlPct,
 
-            grossPnlUsd:
-              closed.trade.grossPnlUsd,
-
             netPnlUsd:
               closed.trade.netPnlUsd,
 
-            depositAtEntry:
-              closed.trade.depositAtEntry,
+            marketNetPnlPct:
+              closed.trade.marketNetPnlPct,
 
-            depositAfterClose:
-              closed.trade.depositAfterClose,
+            anchorBroken:
+              closed.trade.anchorBroken,
+
+            anchorLossTriggered:
+              closed.trade.anchorLossTriggered,
 
             currentDepositUsd:
               paperExecution.getDepositUsd(),
 
             openTrades:
-              paperExecution.getOpenTradesCount(),
-
-            closeReason:
-              closed.trade.closeReason
+              paperExecution.getOpenTradesCount()
           },
           "Paper trade closed"
         );
@@ -1043,8 +1145,7 @@ async function bootstrap(): Promise<void> {
     dexMapper.getActive();
 
   for (
-    const mapping
-    of activeMappings
+    const mapping of activeMappings
   ) {
     mexcWsClient.subscribeTicker(
       mapping.mexcSymbol
