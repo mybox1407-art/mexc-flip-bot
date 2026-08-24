@@ -140,22 +140,22 @@ export class MexcFuturesWsClient {
       }
     );
 
-    logger.info(
-      {
-        symbol:
-          normalizedSymbol
-      },
-      "Subscribed to push.ticker"
-    );
+    //logger.info(
+    //  {
+    //    symbol:
+    //      normalizedSymbol
+    //  },
+    //  "Subscribed to push.ticker"
+    //);
   }
 
   private openConnection(): void {
-    logger.info(
-      {
-        url: config.mexcWsUrl
-      },
-      "Connecting to MEXC Futures WebSocket"
-    );
+    //logger.info(
+    //  {
+    //    url: config.mexcWsUrl
+    //  },
+    //  "Connecting to MEXC Futures WebSocket"
+    //);
 
     this.connectionOpenedAt =
       Date.now();
@@ -170,9 +170,9 @@ export class MexcFuturesWsClient {
       () => {
         this.reconnectAttempt = 0;
 
-        logger.info(
-          "MEXC Futures WebSocket connected"
-        );
+        //logger.info(
+        //  "MEXC Futures WebSocket connected"
+        //);
 
         this.startPing();
 
@@ -285,13 +285,13 @@ export class MexcFuturesWsClient {
 
             this.pingCount += 1;
 
-            logger.info(
-              {
-                count:
-                  this.pingCount
-              },
-              "Ping sent"
-            );
+            //logger.info(
+            //  {
+            //    count:
+            //      this.pingCount
+            //  },
+            //  "Ping sent"
+            //);
           }
         },
         30_000
@@ -341,10 +341,10 @@ export class MexcFuturesWsClient {
 
     this.reconnectAttempt += 1;
 
-    logger.info(
-      { delay },
-      "Scheduling MEXC WebSocket reconnect"
-    );
+    //logger.info(
+    //  { delay },
+    //  "Scheduling MEXC WebSocket reconnect"
+    //);
 
     this.reconnectTimer =
       setTimeout(
@@ -415,9 +415,9 @@ export class MexcFuturesWsClient {
     if (
       channel === "pong"
     ) {
-      logger.debug(
-        "Received pong from MEXC"
-      );
+      //logger.debug(
+      //  "Received pong from MEXC"
+      //);
 
       return;
     }
@@ -425,9 +425,9 @@ export class MexcFuturesWsClient {
     if (
       channel === "rs.sub.tickers"
     ) {
-      logger.info(
-        "MEXC tickers subscription confirmed"
-      );
+      //logger.info(
+      //  "MEXC tickers subscription confirmed"
+      //);
 
       return;
     }
@@ -445,10 +445,10 @@ export class MexcFuturesWsClient {
           param?.symbol ?? ""
         );
 
-      logger.info(
-        { symbol },
-        "MEXC push.ticker subscription confirmed"
-      );
+      //logger.info(
+      //  { symbol },
+      //  "MEXC push.ticker subscription confirmed"
+      //);
 
       return;
     }
@@ -485,15 +485,15 @@ export class MexcFuturesWsClient {
           this.tickerCount % 1000 ===
           0
         ) {
-          logger.info(
-            {
-              count:
-                this.tickerCount,
+          //logger.info(
+          //  {
+          //    count:
+          //      this.tickerCount,
 
-              symbol
-            },
-            "Ticker symbols discovered"
-          );
+          //    symbol
+          //  },
+          //  "Ticker symbols discovered"
+          //);
         }
       }
 
@@ -518,22 +518,22 @@ export class MexcFuturesWsClient {
         if (
           !this.firstTickerLogged
         ) {
-          logger.info(
-            {
-              symbol:
-                ticker.symbol,
+          //logger.info(
+          //  {
+          //    symbol:
+          //      ticker.symbol,
 
-              price:
-                ticker.lastPrice,
+          //    price:
+          //      ticker.lastPrice,
 
-              bid1:
-                ticker.bid1,
+          //    bid1:
+          //      ticker.bid1,
 
-              ask1:
-                ticker.ask1
-            },
-            "First valid ticker received"
-          );
+          //    ask1:
+          //      ticker.ask1
+          //  },
+          //  "First valid ticker received"
+          //);
 
           this.firstTickerLogged =
             true;
