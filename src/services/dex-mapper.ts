@@ -135,16 +135,16 @@ export class DexMapper {
         );
       }
 
-      logger.info(
-        {
-          count: this.mappings.size
-        },
-        "DEX mappings loaded"
-      );
+      //logger.info(
+      //  {
+      //    count: this.mappings.size
+      //  },
+      //  "DEX mappings loaded"
+      //);
     } catch {
-      logger.info(
-        "No existing DEX mapping file, starting fresh"
-      );
+      //logger.info(
+      //  "No existing DEX mapping file, starting fresh"
+      //);
     }
   }
 
