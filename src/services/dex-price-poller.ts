@@ -76,9 +76,9 @@ export class DexPricePoller {
 
     this.stopped = false;
 
-    logger.info(
-      "DexPricePoller started"
-    );
+    //logger.info(
+    //  "DexPricePoller started"
+    //);
 
     void this.poll();
 
@@ -126,22 +126,22 @@ export class DexPricePoller {
         !mapping.chainId ||
         !mapping.dexPairAddress
       ) {
-        logger.warn(
-          {
-            symbol:
-              mapping.mexcSymbol,
+        //logger.warn(
+        //  {
+        //    symbol:
+        //      mapping.mexcSymbol,
 
-            status:
-              mapping.status,
+        //    status:
+        //      mapping.status,
 
-            chainId:
-              mapping.chainId,
+        //    chainId:
+        //      mapping.chainId,
 
-            dexPairAddress:
-              mapping.dexPairAddress
-          },
-          "Missing chainId or dexPairAddress"
-        );
+        //    dexPairAddress:
+        //      mapping.dexPairAddress
+        //  },
+        //  "Missing chainId or dexPairAddress"
+        //);
 
         continue;
       }
@@ -285,18 +285,18 @@ export class DexPricePoller {
         elapsedWindows *
         CAROUSEL_WINDOW_MS;
 
-      logger.info(
-        {
-          windowIndex:
-            this
-              .carouselWindowIndex,
+      //logger.info(
+      //  {
+      //    windowIndex:
+      //      this
+      //        .carouselWindowIndex,
 
-          windowsTotal,
+      //    windowsTotal,
 
-          totalPairs
-        },
-        "DEX carousel window rotated"
-      );
+      //    totalPairs
+      //  },
+      //  "DEX carousel window rotated"
+      //);
     }
 
     const windowIndex =
@@ -361,32 +361,32 @@ export class DexPricePoller {
           startedAt
         );
 
-      logger.debug(
-        {
-          activeMappings:
-            mappings.length,
+      //logger.debug(
+      //  {
+      //    activeMappings:
+      //      mappings.length,
 
-          uniqueDexPairs:
-            allGroups.length,
+      //    uniqueDexPairs:
+      //      allGroups.length,
 
-          carouselActive,
+      //    carouselActive,
 
-          carouselWindowIndex:
-            windowIndex,
+      //    carouselWindowIndex:
+      //      windowIndex,
 
-          carouselWindowsTotal:
-            windowsTotal,
+      //    carouselWindowsTotal:
+      //      windowsTotal,
 
-          carouselWindowSize:
-            selected.length,
+      //    carouselWindowSize:
+      //      selected.length,
 
-          carouselWindowRemainingMs:
-            windowRemainingMs,
+      //    carouselWindowRemainingMs:
+      //      windowRemainingMs,
 
-          startedAt
-        },
-        "DEX poll started"
-      );
+      //    startedAt
+      //  },
+      //  "DEX poll started"
+      //);
 
       /**
        * Выбранное окно
@@ -460,17 +460,17 @@ export class DexPricePoller {
                 requestedAddresses
               );
         } catch (error) {
-          logger.warn(
-            {
-              chainId,
+          //logger.warn(
+          //  {
+          //    chainId,
 
-              pairCount:
-                groups.length,
+          //    pairCount:
+          //      groups.length,
 
-              err: error
-            },
-            "Failed to fetch DEX pairs batch"
-          );
+          //    err: error
+          //  },
+          //  "Failed to fetch DEX pairs batch"
+          //);
 
           continue;
         }
@@ -490,22 +490,22 @@ export class DexPricePoller {
             );
 
           if (!pair) {
-            logger.warn(
-              {
-                chainId,
+            //logger.warn(
+            //  {
+            //    chainId,
 
-                dexPairAddress:
-                  group.mappings[0]
-                    ?.dexPairAddress,
+            //    dexPairAddress:
+            //      group.mappings[0]
+            //        ?.dexPairAddress,
 
-                symbols:
-                  group.mappings.map(
-                    (mapping) =>
-                      mapping.mexcSymbol
-                  )
-              },
-              "No shared pair returned from DexScreener"
-            );
+            //    symbols:
+            //      group.mappings.map(
+            //        (mapping) =>
+            //          mapping.mexcSymbol
+            //      )
+            //  },
+            //  "No shared pair returned from DexScreener"
+            //);
 
             continue;
           }
@@ -535,21 +535,21 @@ export class DexPricePoller {
                 pair
               );
             } catch (error) {
-              logger.warn(
-                {
-                  mexcSymbol:
-                    mapping.mexcSymbol,
+              //logger.warn(
+              //  {
+              //    mexcSymbol:
+              //      mapping.mexcSymbol,
 
-                  chainId:
-                    mapping.chainId,
+              //    chainId:
+              //      mapping.chainId,
 
-                  dexPairAddress:
-                    mapping.dexPairAddress,
+              //    dexPairAddress:
+              //      mapping.dexPairAddress,
 
-                  err: error
-                },
-                "Failed to process DEX price"
-              );
+              //    err: error
+              //  },
+              //  "Failed to process DEX price"
+              //);
             }
           }
         }
@@ -557,13 +557,13 @@ export class DexPricePoller {
     } finally {
       this.running = false;
 
-      logger.debug(
-        {
-          durationMs:
-            Date.now() - startedAt
-        },
-        "DEX poll completed"
-      );
+      //logger.debug(
+      //  {
+      //    durationMs:
+      //      Date.now() - startedAt
+      //  },
+      //  "DEX poll completed"
+      //);
     }
   }
 }
