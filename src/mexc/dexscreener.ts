@@ -61,6 +61,11 @@ interface DexSearchResponse {
  */
 const MAX_PAIRS_PER_BATCH_REQUEST = 30;
 
+/**
+ * TTL кэша для search-запросов.
+ */
+const SEARCH_CACHE_TTL_MS = 60 * 1000;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -99,11 +104,23 @@ function isBlockedBaseSymbol(
   return blockedExact.includes(upper);
 }
 
+interface CachedSearchResult {
+  pair: DexPair | null;
+  expiresAt: number;
+}
+
 export class DexScreenerClient {
   private readonly baseUrl =
     "https://api.dexscreener.com/latest/dex";
 
   private requestCounter = 0;
+
+  /**
+   * Кэш для search-запросов.
+   * Ключ: normalized query.
+   */
+  private readonly searchCache =
+    new Map<string, CachedSearchResult>();
 
   private async fetchJsonWithRetry(
     url: string,
@@ -120,16 +137,6 @@ export class DexScreenerClient {
       const startedAt = Date.now();
 
       try {
-        //logger.debug(
-        //  {
-        //    requestId,
-        //    attempt,
-        //    url,
-        //    query
-        //  },
-        //  "DexScreener request started"
-        //);
-
         const response =
           await fetch(url);
 
@@ -140,21 +147,6 @@ export class DexScreenerClient {
           response.headers.get(
             "retry-after"
           );
-
-        //logger.debug(
-        //  {
-        //    requestId,
-        //    attempt,
-        //    status: response.status,
-        //    statusText: response.statusText,
-        //    ok: response.ok,
-        //    durationMs,
-        //    retryAfter,
-        //    url,
-        //    query
-        //  },
-        //  "DexScreener response received"
-        //);
 
         if (response.status === 429) {
           const retryAfterSeconds =
@@ -229,19 +221,6 @@ export class DexScreenerClient {
         const payload =
           (await response.json()) as DexSearchResponse;
 
-        //logger.debug(
-        //  {
-        //    requestId,
-        //    attempt,
-        //    pairCount:
-        //      payload.pairs?.length ?? 0,
-        //    url,
-        //    query,
-        //    durationMs
-        //  },
-        //  "DexScreener payload parsed"
-        //);
-
         return payload;
       } catch (error) {
         const durationMs =
@@ -289,21 +268,43 @@ export class DexScreenerClient {
     const normalizedQuery =
       normalizeSymbol(query);
 
+    // Фильтр: длина < 2
     if (
       !normalizedQuery ||
-      isBlockedBaseSymbol(
-        normalizedQuery
-      )
+      normalizedQuery.length < 2 ||
+      isBlockedBaseSymbol(normalizedQuery)
     ) {
-      //logger.debug(
-      //  {
-      //    query,
-      //    normalizedQuery
-      //  },
-      //  "DexScreener query skipped"
-      //);
+      logger.debug(
+        {
+          query,
+          normalizedQuery
+        },
+        "DexScreener query skipped: too short or blocked"
+      );
 
       return null;
+    }
+
+    // Проверка кэша
+    const cached = this.searchCache.get(normalizedQuery);
+    if (cached && Date.now() < cached.expiresAt) {
+      logger.debug(
+        {
+          query,
+          normalizedQuery,
+          cachedPair: cached.pair
+            ? {
+                chainId: cached.pair.chainId,
+                pairAddress: cached.pair.pairAddress,
+                baseSymbol: cached.pair.baseSymbol,
+                quoteSymbol: cached.pair.quoteSymbol
+              }
+            : null
+        },
+        "DexScreener query served from cache"
+      );
+
+      return cached.pair;
     }
 
     const url =
@@ -317,17 +318,15 @@ export class DexScreenerClient {
       );
 
     if (!payload?.pairs?.length) {
-      //logger.info(
-      //  {
-      //    query,
-      //    url,
-      //    receivedPairs:
-      //      payload?.pairs?.length ?? 0
-      //  },
-      //  "DexScreener returned no pairs"
-      //);
+      const result: DexPair | null = null;
 
-      return null;
+      // Кэшируем отрицательный результат
+      this.searchCache.set(normalizedQuery, {
+        pair: result,
+        expiresAt: Date.now() + SEARCH_CACHE_TTL_MS
+      });
+
+      return result;
     }
 
     const now = Date.now();
@@ -456,7 +455,7 @@ export class DexScreenerClient {
             return false;
           }
 
-          if (!(priceUsd > 0)) {
+          if (!(priceUsd > 0) {
             return false;
           }
 
@@ -578,39 +577,11 @@ export class DexScreenerClient {
     const best =
       candidates[0] ?? null;
 
-    //logger.info(
-    //  {
-    //    query,
-    //    receivedPairs:
-    //      payload.pairs.length,
-    //    validCandidates:
-    //      candidates.length,
-
-    //    selectedPair: best
-    //      ? {
-    //          chainId: best.chainId,
-    //          dexId: best.dexId,
-    //          pairAddress:
-    //            best.pairAddress,
-    //          baseSymbol:
-    //            best.baseSymbol,
-    //          quoteSymbol:
-    //            best.quoteSymbol,
-    //          liquidityUsd:
-    //            best.liquidityUsd,
-    //          volumeM5:
-    //            best.volumeM5,
-    //          buysM5:
-    //            best.buysM5,
-    //          sellsM5:
-    //            best.sellsM5,
-    //          priceUsd:
-    //            best.priceUsd
-    //        }
-    //      : null
-    //  },
-    //  "DexScreener pair selection completed"
-    //);
+    // Кэшируем результат
+    this.searchCache.set(normalizedQuery, {
+      pair: best,
+      expiresAt: Date.now() + SEARCH_CACHE_TTL_MS
+    });
 
     return best;
   }
@@ -627,14 +598,6 @@ export class DexScreenerClient {
         normalizedQuery
       )
     ) {
-      //logger.debug(
-      //  {
-      //    query,
-      //    normalizedQuery
-      //  },
-      //  "DexScreener lookup skipped"
-      //);
-
       return null;
     }
 
@@ -655,29 +618,9 @@ export class DexScreenerClient {
         );
 
       if (pair) {
-        //logger.info(
-        //  {
-        //    query,
-        //    alias,
-        //    chainId: pair.chainId,
-        //    dexId: pair.dexId,
-        //    pairAddress:
-        //      pair.pairAddress
-        //  },
-        //  "DexScreener pair found by alias"
-        //);
-
         return pair;
       }
     }
-
-    //logger.warn(
-    //  {
-    //    query,
-    //    aliases
-    //  },
-    //  "DexScreener pair not found across chains"
-    //);
 
     return null;
   }
@@ -847,29 +790,9 @@ export class DexScreenerClient {
         )
     };
 
-    //logger.debug(
-    //  {
-    //    chainId,
-    //    pairAddress,
-    //    result
-    //  },
-    //  "DexScreener pair fetched"
-    //);
-
     return result;
   }
 
-  /**
-   * Batch-получение нескольких пар
-   * одной сети за один HTTP-запрос.
-   *
-   * DexScreener принимает до 30
-   * адресов через запятую:
-   * /pairs/{chainId}/{addr1,addr2,...}
-   *
-   * Возвращает Map, ключ —
-   * pairAddress в нижнем регистре.
-   */
   async getPairsByChainAndAddresses(
     chainId: string,
     pairAddresses: string[]
@@ -907,12 +830,6 @@ export class DexScreenerClient {
             MAX_PAIRS_PER_BATCH_REQUEST
         );
 
-      /**
-       * Важно: encodeURIComponent
-       * применяется к каждому адресу
-       * отдельно, запятая-разделитель
-       * не кодируется.
-       */
       const url =
         `${this.baseUrl}/pairs/` +
         `${encodeURIComponent(chainId)}/` +
@@ -1028,18 +945,6 @@ export class DexScreenerClient {
 
         matched += 1;
       }
-
-      //logger.debug(
-      //  {
-      //    chainId,
-      //    requested:
-      //      chunk.length,
-      //    received:
-      //      payload.pairs.length,
-      //    matched
-      //  },
-      //  "DexScreener batch pairs fetched"
-      //);
     }
 
     return result;
