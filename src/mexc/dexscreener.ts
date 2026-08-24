@@ -671,13 +671,13 @@ export class DexScreenerClient {
       }
     }
 
-    logger.warn(
-      {
-        query,
-        aliases
-      },
-      "DexScreener pair not found across chains"
-    );
+    //logger.warn(
+    //  {
+    //    query,
+    //    aliases
+    //  },
+    //  "DexScreener pair not found across chains"
+    //);
 
     return null;
   }
