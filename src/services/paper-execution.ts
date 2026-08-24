@@ -1793,22 +1793,22 @@ export class PaperExecutionService {
     } else if (
       anchor
     ) {
-      logger.debug(
-        {
-          symbol:
-            ticker.symbol,
+      //logger.debug(
+      //  {
+      //    symbol:
+      //      ticker.symbol,
 
-          tradeId:
-            trade.id,
+      //    tradeId:
+      //      trade.id,
 
-          anchorAgeMs:
-            anchor.anchorAgeMs,
+      //    anchorAgeMs:
+      //      anchor.anchorAgeMs,
 
-          maxAnchorAgeMs:
-            config.maxDexAnchorAgeMs
-        },
-        "Stale DEX anchor ignored for open trade"
-      );
+      //    maxAnchorAgeMs:
+      //      config.maxDexAnchorAgeMs
+      //  },
+      //  "Stale DEX anchor ignored for open trade"
+      //);
     }
 
     const spreadExitReached =
