@@ -303,10 +303,9 @@ export class DexScreenerClient {
         },
         "DexScreener query served from cache"
       );
-
+    
       return cached.pair;
     }
-
     const url =
       `${this.baseUrl}/search?q=` +
       encodeURIComponent(query);
