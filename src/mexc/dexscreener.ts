@@ -454,7 +454,7 @@ export class DexScreenerClient {
             return false;
           }
 
-          if (!(priceUsd > 0) {
+          if (!(priceUsd > 0)) {
             return false;
           }
 
