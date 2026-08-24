@@ -58,7 +58,7 @@ const REGULAR_STOP_DISTANCE_PCT =
  * против направления позиции на 0.40%.
  */
 const ANCHOR_BREAK_DISTANCE_PCT =
-  0.40;
+  0.60;
 
 /**
  * Аварийная защита по net PnL.
