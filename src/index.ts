@@ -146,7 +146,6 @@ async function bootstrap(): Promise<void> {
     "dexAnchorAtExit",
     "dexSnapshotAtEntry",
     "dexSnapshotAtExit",
-
     "entryAnchorAgeMs",
     "entryAnchorIsFresh",
     "entryMomentumPct",
@@ -158,14 +157,13 @@ async function bootstrap(): Promise<void> {
     "entryDexTrendSlopePct",
     "maxEntryMexcBookSpreadPct",
     "maxAnchorBreakLossPct",
-
+    "anchorLossMinHoldMs",
     "entrySpreadPct",
     "exitSpreadPct",
     "grossPnlPct",
     "netPnlPct",
     "grossPnlUsd",
     "netPnlUsd",
-
     "marketExitPrice",
     "marketGrossPnlPct",
     "marketNetPnlPct",
@@ -176,7 +174,6 @@ async function bootstrap(): Promise<void> {
     "anchorLossTriggered",
     "stopPriceAtExit",
     "stopDistancePctAtExit",
-
     "holdMs",
     "openReason",
     "closeReason"
@@ -626,10 +623,6 @@ async function bootstrap(): Promise<void> {
           return;
         }
 
-        /**
-         * История MEXC обновляется
-         * до evaluate() и onSignal().
-         */
         paperExecution.recordTicker(
           ticker
         );
@@ -643,6 +636,9 @@ async function bootstrap(): Promise<void> {
           spreadEngine.evaluate(
             ticker
           );
+
+        let openedNow =
+          false;
 
         if (
           signal
@@ -720,6 +716,9 @@ async function bootstrap(): Promise<void> {
             opened.action ===
               "OPEN"
           ) {
+            openedNow =
+              true;
+
             await paperTradesWriter.appendRow({
               event:
                 "OPEN",
@@ -805,6 +804,9 @@ async function bootstrap(): Promise<void> {
               maxAnchorBreakLossPct:
                 opened.trade.maxAnchorBreakLossPct,
 
+              anchorLossMinHoldMs:
+                3 * 1000,
+
               entrySpreadPct:
                 opened.trade.entrySpreadPct,
 
@@ -863,8 +865,15 @@ async function bootstrap(): Promise<void> {
         }
 
         /**
-         * Сопровождаем уже открытую позицию.
+         * Не вызываем onTicker на том же тикере,
+         * на котором только что открыли позицию.
          */
+        if (
+          openedNow
+        ) {
+          return;
+        }
+
         const closed =
           paperExecution.onTicker(
             ticker,
@@ -990,6 +999,9 @@ async function bootstrap(): Promise<void> {
 
           maxAnchorBreakLossPct:
             closed.trade.maxAnchorBreakLossPct,
+
+          anchorLossMinHoldMs:
+            3 * 1000,
 
           entrySpreadPct:
             closed.trade.entrySpreadPct,
@@ -1145,7 +1157,8 @@ async function bootstrap(): Promise<void> {
     dexMapper.getActive();
 
   for (
-    const mapping of activeMappings
+    const mapping
+    of activeMappings
   ) {
     mexcWsClient.subscribeTicker(
       mapping.mexcSymbol
