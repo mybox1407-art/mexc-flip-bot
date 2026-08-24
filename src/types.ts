@@ -83,7 +83,10 @@ export interface FlipSignal {
   dexDriftPct: number;
   dexDirectionalDriftPct: number;
 
-  // NEW: OLS-наклон DEX цены, % в минуту
+  /**
+   * OLS-наклон DEX-цены,
+   * процент в минуту.
+   */
   dexTrendSlopePct?: number;
 
   confirmCount: number;
@@ -119,7 +122,10 @@ export interface PaperTrade {
 
   depositAtEntry: number;
 
-  // 0.3 = 30%, 0.003 = 0.3%
+  /**
+   * 0.3 = 30%.
+   * 0.003 = 0.3%.
+   */
   allocationPct: number;
 
   depositAfterClose?: number;
@@ -130,6 +136,25 @@ export interface PaperTrade {
   dexSnapshotAtEntry?: number;
   dexSnapshotAtExit?: number;
 
+  /**
+   * Диагностика входа.
+   */
+  entryAnchorAgeMs?: number;
+  entryAnchorIsFresh?: boolean;
+
+  entryMomentumPct?: number;
+  entryMomentumBlocked?: boolean;
+
+  entryMexcMid?: number;
+  entryNetEdgePct?: number;
+
+  entryDexDriftPct?: number;
+  entryDexDirectionalDriftPct?: number;
+  entryDexTrendSlopePct?: number;
+
+  maxEntryMexcBookSpreadPct?: number;
+  maxAnchorBreakLossPct?: number;
+
   entrySpreadPct: number;
   exitSpreadPct?: number;
 
@@ -139,7 +164,26 @@ export interface PaperTrade {
   marketExitPrice?: number;
   stopSlippagePct?: number;
 
-  // NEW: trailing stop state
+  /**
+   * Диагностика выхода.
+   */
+  marketGrossPnlPct?: number;
+  marketNetPnlPct?: number;
+
+  anchorAgeMsAtExit?: number;
+  anchorIsFreshAtExit?: boolean;
+
+  dexMoveFromEntryPct?: number;
+
+  anchorBroken?: boolean;
+  anchorLossTriggered?: boolean;
+
+  stopPriceAtExit?: number;
+  stopDistancePctAtExit?: number;
+
+  /**
+   * Trailing stop state.
+   */
   trailActive?: boolean;
   trailBestPrice?: number;
   trailTriggerPct?: number;
