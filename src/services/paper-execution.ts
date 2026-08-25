@@ -24,10 +24,10 @@ type PaperAction =
     };
 
 const MAX_ENTRY_SPREAD_PCT =
-  4.5;
+  4;
 
 const MIN_NET_PROFIT_PCT =
-  0.05;
+  0.1;
 
 const SYMBOL_STOP_COOLDOWN_MS =
   15 * 60 * 1000;
@@ -51,14 +51,14 @@ const INITIAL_STOP_DISTANCE_PCT =
   0.40;
 
 const REGULAR_STOP_DISTANCE_PCT =
-  1.5;
+  1.2;
 
 /**
  * Выход при движении DEX-якоря
  * против направления позиции на 0.60%.
  */
 const ANCHOR_BREAK_DISTANCE_PCT =
-  0.60;
+  0.40;
 
 /**
  * Аварийная защита по net PnL.
