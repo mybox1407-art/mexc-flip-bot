@@ -55,7 +55,7 @@ const REGULAR_STOP_DISTANCE_PCT =
 
 /**
  * Выход при движении DEX-якоря
- * против направления позиции на 0.40%.
+ * против направления позиции на 0.60%.
  */
 const ANCHOR_BREAK_DISTANCE_PCT =
   0.60;
@@ -616,7 +616,7 @@ export class PaperExecutionService {
 
     return (
       stopPrice *
-      (1 + slippagePct / 100)
+        (1 + slippagePct / 100)
     );
   }
 
@@ -1480,88 +1480,60 @@ export class PaperExecutionService {
       {
         id:
           trade.id,
-
         symbol:
           trade.symbol,
-
         direction:
           trade.direction,
-
         entryPrice:
           trade.entryPrice,
-
         entryMexcBid:
           trade.entryMexcBid,
-
         entryMexcAsk:
           trade.entryMexcAsk,
-
         entryMexcBookSpreadPct:
           trade.entryMexcBookSpreadPct,
-
         entryAnchorAgeMs:
           trade.entryAnchorAgeMs,
-
         entryAnchorIsFresh:
           trade.entryAnchorIsFresh,
-
         entryMomentumPct:
           trade.entryMomentumPct,
-
         entryMomentumBlocked:
           trade.entryMomentumBlocked,
-
         entryMexcMid:
           trade.entryMexcMid,
-
         entrySpreadPct:
           trade.entrySpreadPct,
-
         entryNetEdgePct:
           trade.entryNetEdgePct,
-
         entryDexDriftPct:
           trade.entryDexDriftPct,
-
         entryDexDirectionalDriftPct:
           trade.entryDexDirectionalDriftPct,
-
         entryDexTrendSlopePct:
           trade.entryDexTrendSlopePct,
-
         maxEntryMexcBookSpreadPct:
           trade.maxEntryMexcBookSpreadPct,
-
         maxAnchorBreakLossPct:
           trade.maxAnchorBreakLossPct,
-
         anchorLossMinHoldMs:
           ANCHOR_LOSS_MIN_HOLD_MS,
-
         dexAnchorAtEntry:
           trade.dexAnchorAtEntry,
-
         stopPrice:
           trade.stopPrice,
-
         stopDistancePct:
           trade.stopDistancePct,
-
         qtyUsd:
           trade.qtyUsd,
-
         qtyToken:
           trade.qtyToken,
-
         depositAtEntry:
           trade.depositAtEntry,
-
         trailTriggerPct:
           trade.trailTriggerPct,
-
         trailDistancePct:
           trade.trailDistancePct,
-
         minNetProfitPct:
           MIN_NET_PROFIT_PCT
       },
@@ -1797,13 +1769,10 @@ export class PaperExecutionService {
       //  {
       //    symbol:
       //      ticker.symbol,
-
       //    tradeId:
       //      trade.id,
-
       //    anchorAgeMs:
       //      anchor.anchorAgeMs,
-
       //    maxAnchorAgeMs:
       //      config.maxDexAnchorAgeMs
       //  },
@@ -1831,68 +1800,85 @@ export class PaperExecutionService {
       | number
       | undefined;
 
-    if (
-      anchorBroken ||
-      anchorLossTriggered
-    ) {
-      closeReason =
-        "anchor_broken";
-
-      exitPrice =
-        marketExitPrice;
+    if (anchorBroken) {
+      closeReason = "anchor_broken";
+      exitPrice = marketExitPrice;
 
       logger.warn(
         {
           tradeId:
             trade.id,
-
           symbol:
             trade.symbol,
-
           direction:
             trade.direction,
-
           holdMs,
-
           anchorBroken,
-
           anchorLossTriggered,
-
           marketGrossPnlPct:
             round(
               marketGrossPnlPct,
               4
             ),
-
           marketNetPnlPct:
             round(
               marketNetPnlPct,
               4
             ),
-
           maxAnchorBreakLossPct:
             MAX_ANCHOR_BREAK_LOSS_PCT,
-
           anchorLossMinHoldMs:
             ANCHOR_LOSS_MIN_HOLD_MS,
-
           dexAnchorAtEntry:
             trade.dexAnchorAtEntry,
-
           currentDexPrice,
-
           dexMoveFromEntryPct,
-
           anchorAgeMs:
             anchor?.anchorAgeMs,
-
           anchorIsFresh
         },
-        "Closing trade: anchor protection triggered"
+        "Closing trade: DEX anchor movement protection triggered"
       );
-    } else if (
-      stopTriggered
-    ) {
+    } else if (anchorLossTriggered) {
+      closeReason = "anchor_loss";
+      exitPrice = marketExitPrice;
+
+      logger.warn(
+        {
+          tradeId:
+            trade.id,
+          symbol:
+            trade.symbol,
+          direction:
+            trade.direction,
+          holdMs,
+          anchorBroken,
+          anchorLossTriggered,
+          marketGrossPnlPct:
+            round(
+              marketGrossPnlPct,
+              4
+            ),
+          marketNetPnlPct:
+            round(
+              marketNetPnlPct,
+              4
+            ),
+          maxAnchorBreakLossPct:
+            MAX_ANCHOR_BREAK_LOSS_PCT,
+          anchorLossMinHoldMs:
+            ANCHOR_LOSS_MIN_HOLD_MS,
+          dexAnchorAtEntry:
+            trade.dexAnchorAtEntry,
+          currentDexPrice,
+          dexMoveFromEntryPct,
+          anchorAgeMs:
+            anchor?.anchorAgeMs,
+          anchorIsFresh
+        },
+        "Closing trade: maximum loss protection triggered"
+      );
+    } else if (stopTriggered) {
       closeReason =
         trade.trailActive
           ? "trailing_stop"
@@ -1992,16 +1978,11 @@ export class PaperExecutionService {
         {
           tradeId:
             trade.id,
-
           symbol:
             trade.symbol,
-
           grossPnlPct,
-
           netPnlPct,
-
           grossPnlUsd,
-
           netPnlUsd
         },
         "Invalid paper PnL"
@@ -2029,10 +2010,8 @@ export class PaperExecutionService {
         {
           symbol:
             trade.symbol,
-
           consecutiveStops:
             riskState.consecutiveStops,
-
           cooldownMin:
             SYMBOL_STOP_COOLDOWN_MS /
             60000
@@ -2052,10 +2031,8 @@ export class PaperExecutionService {
           {
             symbol:
               trade.symbol,
-
             consecutiveStops:
               riskState.consecutiveStops,
-
             bannedHours:
               SYMBOL_BAN_DURATION_MS /
               3600000
@@ -2236,160 +2213,108 @@ export class PaperExecutionService {
       {
         tradeId:
           closedTrade.id,
-
         symbol:
           closedTrade.symbol,
-
         direction:
           closedTrade.direction,
-
         closeReason,
-
         holdMs,
-
         entry: {
           entryAnchorAgeMs:
             closedTrade.entryAnchorAgeMs,
-
           entryAnchorIsFresh:
             closedTrade.entryAnchorIsFresh,
-
           entryMomentumPct:
             closedTrade.entryMomentumPct,
-
           entryMomentumBlocked:
             closedTrade.entryMomentumBlocked,
-
           entryMexcBid:
             closedTrade.entryMexcBid,
-
           entryMexcAsk:
             closedTrade.entryMexcAsk,
-
           entryMexcMid:
             closedTrade.entryMexcMid,
-
           entryMexcBookSpreadPct:
             closedTrade.entryMexcBookSpreadPct,
-
           entrySpreadPct:
             closedTrade.entrySpreadPct,
-
           entryNetEdgePct:
             closedTrade.entryNetEdgePct,
-
           entryDexDriftPct:
             closedTrade.entryDexDriftPct,
-
           entryDexDirectionalDriftPct:
             closedTrade.entryDexDirectionalDriftPct,
-
           entryDexTrendSlopePct:
             closedTrade.entryDexTrendSlopePct,
-
           dexAnchorAtEntry:
             closedTrade.dexAnchorAtEntry
         },
-
         exit: {
           exitPrice:
             closedTrade.exitPrice,
-
           marketExitPrice:
             closedTrade.marketExitPrice,
-
           exitMexcBid:
             closedTrade.exitMexcBid,
-
           exitMexcAsk:
             closedTrade.exitMexcAsk,
-
           exitMexcBookSpreadPct:
             closedTrade.exitMexcBookSpreadPct,
-
           currentDexPrice,
-
           dexAnchorAtExit:
             closedTrade.dexAnchorAtExit,
-
           dexMoveFromEntryPct:
-
             closedTrade.dexMoveFromEntryPct,
-
           currentSpreadPct,
-
           anchorAgeMs:
             closedTrade.anchorAgeMsAtExit,
-
           anchorIsFresh:
             closedTrade.anchorIsFreshAtExit,
-
           anchorBroken:
             closedTrade.anchorBroken,
-
           anchorLossTriggered:
             closedTrade.anchorLossTriggered,
-
           marketGrossPnlPct:
             closedTrade.marketGrossPnlPct,
-
           marketNetPnlPct:
             closedTrade.marketNetPnlPct,
-
           maxAnchorBreakLossPct:
             MAX_ANCHOR_BREAK_LOSS_PCT,
-
           anchorLossMinHoldMs:
             ANCHOR_LOSS_MIN_HOLD_MS,
-
           stopPrice:
             closedTrade.stopPriceAtExit,
-
           stopDistancePct:
             closedTrade.stopDistancePctAtExit,
-
           stopTriggerPrice:
             closedTrade.stopTriggerPrice,
-
           previousStopPrice,
-
           previousStopDistancePct,
-
           currentStopDistancePct:
             closedTrade.stopDistancePct,
-
           trailActive:
             closedTrade.trailActive,
-
           trailBestPrice:
             closedTrade.trailBestPrice
         },
-
         pnl: {
           grossPnlPct:
             closedTrade.grossPnlPct,
-
           netPnlPct:
             closedTrade.netPnlPct,
-
           grossPnlUsd:
             closedTrade.grossPnlUsd,
-
           netPnlUsd:
             closedTrade.netPnlUsd,
-
           totalCostsPct
         },
-
         risk: {
           consecutiveStops:
             riskState.consecutiveStops,
-
           cooldownUntil:
             new Date(
               riskState.cooldownUntil
             ).toISOString(),
-
           bannedUntil:
             riskState.bannedUntil > now
               ? new Date(
@@ -2397,45 +2322,31 @@ export class PaperExecutionService {
                 ).toISOString()
               : undefined
         },
-
         depositBeforeClose,
-
         depositAfterClose,
-
         configuration: {
           maxEntrySpreadPct:
             MAX_ENTRY_SPREAD_PCT,
-
           maxEntryMexcBookSpreadPct:
             MAX_ENTRY_MEXC_BOOK_SPREAD_PCT,
-
           maxDexAnchorAgeMs:
             config.maxDexAnchorAgeMs,
-
           anchorBreakDistancePct:
             ANCHOR_BREAK_DISTANCE_PCT,
-
           maxAnchorBreakLossPct:
             MAX_ANCHOR_BREAK_LOSS_PCT,
-
           anchorLossMinHoldMs:
             ANCHOR_LOSS_MIN_HOLD_MS,
-
           initialStopDurationMs:
             INITIAL_STOP_DURATION_MS,
-
           initialStopDistancePct:
             INITIAL_STOP_DISTANCE_PCT,
-
           regularStopDistancePct:
             REGULAR_STOP_DISTANCE_PCT,
-
           entryMomentumWindowMs:
             ENTRY_MOMENTUM_WINDOW_MS,
-
           entryMomentumBlockPct:
             ENTRY_MOMENTUM_BLOCK_PCT,
-
           minNetProfitPct:
             MIN_NET_PROFIT_PCT
         }
@@ -2446,7 +2357,6 @@ export class PaperExecutionService {
     return {
       action:
         "CLOSE",
-
       trade:
         closedTrade
     };
