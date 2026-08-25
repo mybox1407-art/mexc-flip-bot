@@ -24,7 +24,7 @@ type PaperAction =
     };
 
 const MAX_ENTRY_SPREAD_PCT =
-  4;
+  4.5;
 
 const MIN_NET_PROFIT_PCT =
   0.1;
