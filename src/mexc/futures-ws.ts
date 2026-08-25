@@ -607,15 +607,15 @@ export class MexcFuturesWsClient {
       !Number.isFinite(lastPrice) ||
       lastPrice <= 0
     ) {
-      logger.warn(
-        {
-          symbol,
-          lastPrice,
-          rawLastPrice:
-            data.lastPrice
-        },
-        "Invalid MEXC push ticker last price"
-      );
+      //logger.warn(
+      //  {
+      //    symbol,
+      //    lastPrice,
+      //    rawLastPrice:
+      //      data.lastPrice
+      //  },
+      //  "Invalid MEXC push ticker last price"
+      //);
 
       return null;
     }
