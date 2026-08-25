@@ -44,7 +44,8 @@ export type CloseReason =
   | "anchor_moved_against_position"
   | "anchor_broken"
   | "anchor_stale"
-  | "liquidity_drop";
+  | "liquidity_drop"
+  | "anchor_loss";
 
 export interface FlipSignal {
   id: string;
