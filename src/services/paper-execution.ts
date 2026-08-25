@@ -51,7 +51,7 @@ const INITIAL_STOP_DISTANCE_PCT =
   0.40;
 
 const REGULAR_STOP_DISTANCE_PCT =
-  0.90;
+  0.60;
 
 /**
  * Выход при движении DEX-якоря
