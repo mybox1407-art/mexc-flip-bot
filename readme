@@ -2,7 +2,7 @@ cd mexc-flip-bot
 docker compose down
 cd ~
 rm -rf mexc-flip-bot
-git clone https://github.com/mybox1407-art/mexc-flip-bot.git
+git clone -b test --single-branch https://github.com/mybox1407-art/mexc-flip-bot.git
 cd mexc-flip-bot
 npm install protobufjs
 npm install -D @types/protobufjs
