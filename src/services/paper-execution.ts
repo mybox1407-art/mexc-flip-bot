@@ -1131,6 +1131,30 @@ export class PaperExecutionService {
       return null;
     }
 
+    const dexMomentumAgainstPosition =
+      signal.direction === "LONG"
+        ? signal.dexDirectionalDriftPct < -0.10 ||
+          (signal.dexTrendSlopePct ?? 0) < -0.10
+        : signal.dexDirectionalDriftPct > 0.10 ||
+          (signal.dexTrendSlopePct ?? 0) > 0.10;
+    
+    if (dexMomentumAgainstPosition) {
+      logger.warn(
+        {
+          symbol: signal.symbol,
+          direction: signal.direction,
+          dexDirectionalDriftPct:
+            signal.dexDirectionalDriftPct,
+          dexTrendSlopePct:
+            signal.dexTrendSlopePct ?? 0,
+          blockPct: 0.10
+        },
+        "Signal skipped: DEX momentum is moving against the intended position"
+      );
+    
+      return null;
+    }
+        
     const entryMexcMid =
       (
         mexcBid +
