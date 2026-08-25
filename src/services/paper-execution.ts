@@ -51,7 +51,7 @@ const INITIAL_STOP_DISTANCE_PCT =
   0.40;
 
 const REGULAR_STOP_DISTANCE_PCT =
-  1.2;
+  0.90;
 
 /**
  * Выход при движении DEX-якоря
@@ -93,7 +93,10 @@ const ENTRY_MOMENTUM_WINDOW_MS =
 const ENTRY_MOMENTUM_MIN_SAMPLE_AGE_MS =
   20 * 1000;
 
-const ENTRY_MOMENTUM_BLOCK_PCT =
+const LONG_ENTRY_MOMENTUM_BLOCK_PCT =
+  0.05;
+
+const SHORT_ENTRY_MOMENTUM_BLOCK_PCT =
   0.15;
 
 const PRICE_HISTORY_TTL_MS =
@@ -464,17 +467,17 @@ export class PaperExecutionService {
     momentumPct: number
   ): boolean {
     if (
-      direction === "SHORT"
+      direction === "LONG"
     ) {
       return (
-        momentumPct >=
-        ENTRY_MOMENTUM_BLOCK_PCT
+        momentumPct <=
+        -LONG_ENTRY_MOMENTUM_BLOCK_PCT
       );
     }
-
+  
     return (
-      momentumPct <=
-      -ENTRY_MOMENTUM_BLOCK_PCT
+      momentumPct >=
+      SHORT_ENTRY_MOMENTUM_BLOCK_PCT
     );
   }
 
@@ -1120,7 +1123,9 @@ export class PaperExecutionService {
               4
             ),
           blockPct:
-            ENTRY_MOMENTUM_BLOCK_PCT,
+            signal.direction === "LONG"
+              ? LONG_ENTRY_MOMENTUM_BLOCK_PCT
+              : SHORT_ENTRY_MOMENTUM_BLOCK_PCT,
           windowMs:
             ENTRY_MOMENTUM_WINDOW_MS,
           historySamples
