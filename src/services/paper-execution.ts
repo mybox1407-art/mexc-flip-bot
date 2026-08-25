@@ -2374,8 +2374,10 @@ export class PaperExecutionService {
             REGULAR_STOP_DISTANCE_PCT,
           entryMomentumWindowMs:
             ENTRY_MOMENTUM_WINDOW_MS,
-          entryMomentumBlockPct:
-            ENTRY_MOMENTUM_BLOCK_PCT,
+          longEntryMomentumBlockPct:
+            LONG_ENTRY_MOMENTUM_BLOCK_PCT,
+          shortEntryMomentumBlockPct:
+            SHORT_ENTRY_MOMENTUM_BLOCK_PCT,
           minNetProfitPct:
             MIN_NET_PROFIT_PCT
         }
