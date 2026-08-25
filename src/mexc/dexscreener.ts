@@ -56,6 +56,8 @@ interface DexSearchResponse {
 
 const MAX_PAIRS_PER_BATCH_REQUEST = 30;
 const SEARCH_CACHE_TTL_MS = 60 * 1000;
+const BATCH_CACHE_TTL_MS = 1500;
+const MIN_BATCH_INTERVAL_MS = 1100;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -84,10 +86,17 @@ interface CachedSearchResult {
   expiresAt: number;
 }
 
+interface CachedBatchResult {
+  pairs: Map<string, DexPair>;
+  expiresAt: number;
+}
+
 export class DexScreenerClient {
   private readonly baseUrl = "https://api.dexscreener.com/latest/dex";
   private requestCounter = 0;
   private readonly searchCache = new Map<string, CachedSearchResult>();
+  private readonly batchCache = new Map<string, CachedBatchResult>();
+  private lastBatchRequestAt = 0;
 
   private async fetchJsonWithRetry(
     url: string,
@@ -420,12 +429,26 @@ export class DexScreenerClient {
     const uniqueAddresses = [
       ...new Set(
         pairAddresses
-          .map((address) => address.trim())
+          .map((address) => address.trim().toLowerCase())
           .filter((address) => address.length > 0)
       )
     ];
 
     if (uniqueAddresses.length === 0) return result;
+
+    const cacheKey = `${chainId}:${uniqueAddresses.sort().join(",")}`;
+    const cached = this.batchCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      logger.debug({ chainId, count: uniqueAddresses.length }, "Batch cache hit");
+      return cached.pairs;
+    }
+
+    const now = Date.now();
+    const waitMs = this.lastBatchRequestAt + MIN_BATCH_INTERVAL_MS - now;
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+    this.lastBatchRequestAt = Date.now();
 
     for (
       let offset = 0;
@@ -477,7 +500,16 @@ export class DexScreenerClient {
           pairCreatedAt: Number(rawPair.pairCreatedAt ?? 0)
         });
       }
+
+      if (offset + MAX_PAIRS_PER_BATCH_REQUEST < uniqueAddresses.length) {
+        await sleep(150);
+      }
     }
+
+    this.batchCache.set(cacheKey, {
+      pairs: result,
+      expiresAt: Date.now() + BATCH_CACHE_TTL_MS
+    });
 
     return result;
   }
