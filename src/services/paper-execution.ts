@@ -647,25 +647,25 @@ export class PaperExecutionService {
       );
     }
 
-    if (
-      risk.anchorLosses >=
-        MAX_CONSECUTIVE_STOPS &&
-      risk.reversalConfirmations <
-        ANCHOR_REVERSAL_CONFIRMATIONS
-    ) {
-      return this.skipSignal(
-        signal,
-        "blocked after consecutive anchor losses",
-        {
-          anchorLosses:
-            risk.anchorLosses,
-          reversalConfirmations:
-            risk.reversalConfirmations,
-          requiredConfirmations:
-            ANCHOR_REVERSAL_CONFIRMATIONS
-        }
-      );
-    }
+    //if (
+    //  risk.anchorLosses >=
+    //    MAX_CONSECUTIVE_STOPS &&
+    //  risk.reversalConfirmations <
+    //    ANCHOR_REVERSAL_CONFIRMATIONS
+    //) {
+    //  return this.skipSignal(
+    //    signal,
+    //    "blocked after consecutive anchor losses",
+    //    {
+    //      anchorLosses:
+    //        risk.anchorLosses,
+    //      reversalConfirmations:
+    //        risk.reversalConfirmations,
+    //      requiredConfirmations:
+    //        ANCHOR_REVERSAL_CONFIRMATIONS
+    //    }
+    //  );
+    //}
 
     if (
       signal.spreadPct >
