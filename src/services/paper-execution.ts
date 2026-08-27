@@ -7,8 +7,8 @@ import type { AnchorStatus } from "./spread-engine.js";
 type PaperAction = { action: "OPEN" | "CLOSE"; trade: PaperTrade };
 type Direction = "LONG" | "SHORT";
 
-const MAX_ENTRY_SPREAD_PCT = 4.5;
-const MIN_NET_PROFIT_PCT = 0.1;
+const MAX_ENTRY_SPREAD_PCT = 3.5;
+const MIN_NET_PROFIT_PCT = 0.05;
 
 const LOSS_COOLDOWN_MS = 15 * 60 * 1000;
 const SMALL_PROFIT_COOLDOWN_MS = 3 * 60 * 1000;
