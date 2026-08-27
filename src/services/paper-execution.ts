@@ -7,8 +7,8 @@ import type { AnchorStatus } from "./spread-engine.js";
 type PaperAction = { action: "OPEN" | "CLOSE"; trade: PaperTrade };
 type Direction = "LONG" | "SHORT";
 
-const MAX_ENTRY_SPREAD_PCT = 3.5;
-const MIN_NET_PROFIT_PCT = 0.05;
+const MAX_ENTRY_SPREAD_PCT = 3.5; // 4.5
+const MIN_NET_PROFIT_PCT = 0.05; //0.1
 
 const LOSS_COOLDOWN_MS = 15 * 60 * 1000;
 const SMALL_PROFIT_COOLDOWN_MS = 3 * 60 * 1000;
@@ -16,7 +16,7 @@ const PROFIT_COOLDOWN_MS = 5 * 60 * 1000;
 const TIMEOUT_COOLDOWN_MS = 10 * 60 * 1000;
 
 const MAX_CONSECUTIVE_STOPS = 2;
-const SYMBOL_BAN_DURATION_MS = 2 * 60 * 60 * 1000;
+const SYMBOL_BAN_DURATION_MS = 30 * 60 * 1000;  // 30 минут
 
 const INITIAL_STOP_DURATION_MS = 30 * 1000;
 const INITIAL_STOP_DISTANCE_PCT = 0.4;
@@ -26,7 +26,7 @@ const ANCHOR_BREAK_DISTANCE_PCT = 0.4;
 const MAX_ANCHOR_BREAK_LOSS_PCT = 0.5;
 const ANCHOR_LOSS_MIN_HOLD_MS = 3 * 1000;
 
-const MAX_ENTRY_MEXC_BOOK_SPREAD_PCT = 0.15;
+const MAX_ENTRY_MEXC_BOOK_SPREAD_PCT = 0.1; //0.15
 
 const ENTRY_MOMENTUM_WINDOW_MS = 30 * 1000;
 const ENTRY_MOMENTUM_MIN_SAMPLE_AGE_MS = 20 * 1000;
@@ -34,7 +34,7 @@ const LONG_ENTRY_MOMENTUM_BLOCK_PCT = 0.05;
 const SHORT_ENTRY_MOMENTUM_BLOCK_PCT = 0.15;
 const PRICE_HISTORY_TTL_MS = 90 * 1000;
 
-const MAX_EXIT_SPREAD_PCT = 1.0;
+const MAX_EXIT_SPREAD_PCT = 1.5; //1
 const ANCHOR_REVERSAL_CONFIRMATIONS = 2;
 
 interface SymbolRiskState {
